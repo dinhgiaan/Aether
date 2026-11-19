@@ -150,11 +150,8 @@ final class WebController: NSObject, ObservableObject {
     }
     
     func goBackToHome() {
-        if webView.canGoBack {
-            webView.goBack()
-        } else {
-            webView.load(URLRequest(url: Config.home))
-        }
+        // Tự động thu nhỏ video thành PiP trước để video tiếp tục phát không bị tắt, sau đó lùi về trang trước mượt mà
+        run("if (window.__aeMedia && window.__aeMedia.togglePiP) { window.__aeMedia.togglePiP(); } if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }")
     }
     
     func requestDownload() {
@@ -314,8 +311,13 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     target.handleDownloadPayload(dict: dict)
                 }
             case "aetherNav":
-                if let dict = message.body as? [String: Any], let watching = dict["isWatching"] as? Bool {
-                    target.isWatching = watching
+                if let dict = message.body as? [String: Any] {
+                    if let watching = dict["isWatching"] as? Bool {
+                        target.isWatching = watching
+                    }
+                    if let action = dict["action"] as? String, action == "openDownloads" {
+                        target.showOfflineLibrary = true
+                    }
                 }
             default:
                 break

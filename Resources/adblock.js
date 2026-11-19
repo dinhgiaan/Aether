@@ -31,6 +31,9 @@
   JSON.parse = function (...args) {
     try {
       const data = nativeParse.apply(this, args);
+      if (data && (data.streamingData || data.videoDetails)) {
+        window.__lastPlayerResponse = data;
+      }
       return prune(data);
     } catch (_) {
       return nativeParse.apply(this, args);
@@ -41,7 +44,14 @@
     const nativeJson = Response.prototype.json;
     Response.prototype.json = function (...args) {
       return nativeJson.apply(this, args).then((data) => {
-        try { return prune(data); } catch (_) { return data; }
+        try {
+          if (data && (data.streamingData || data.videoDetails)) {
+            window.__lastPlayerResponse = data;
+          }
+          return prune(data);
+        } catch (_) {
+          return data;
+        }
       });
     };
   }
@@ -135,18 +145,23 @@
     // Nút "Open App"
     '.yt-uix-redirect-button', '.open-app-button', 'ytm-open-app-promo-renderer',
     'ytm-app-promo-renderer', '.ytp-webview-open-app-button',
-    // Tab Shorts & Giá sách Shorts trên trang chủ / tìm kiếm
+    // Tab Shorts & Giá sách Shorts trên trang chủ / tìm kiếm triệt để
     'ytm-pivot-bar-item-renderer:has([tab-identifier="FEshorts"])',
-    'ytm-pivot-bar-item-renderer:has(a[href="/shorts"])',
+    'ytm-pivot-bar-item-renderer:has(a[href*="/shorts"])',
     'ytm-reel-shelf-renderer',
     'ytm-rich-shelf-renderer:has(ytm-reel-item-renderer)',
     'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer)',
     'ytm-reel-item-renderer',
     'ytm-rich-item-renderer:has(ytm-reel-item-renderer)',
-    'ytm-rich-item-renderer:has(a[href^="/shorts"])',
-    'ytm-video-with-context-renderer:has(a[href^="/shorts"])',
-    'ytm-compact-video-renderer:has(a[href^="/shorts"])',
+    'ytm-rich-item-renderer:has(a[href*="/shorts"])',
+    'ytm-video-with-context-renderer:has(a[href*="/shorts"])',
+    'ytm-compact-video-renderer:has(a[href*="/shorts"])',
     'ytm-item-section-renderer:has(ytm-reel-shelf-renderer)',
+    'ytm-item-section-renderer:has(ytm-reel-item-renderer)',
+    'ytm-shelf-renderer:has(ytm-reel-item-renderer)',
+    'ytm-reel-player-overlay-renderer',
+    '[aria-label*="Shorts"]',
+    '[title*="Shorts"]',
     // Xoá header (logo, search, 3 dots) khi đang xem video
     'body.ae-watching ytm-mobile-topbar-renderer',
     'body.ae-watching header.mobile-topbar-header',
@@ -163,14 +178,54 @@
     'ytm-compact-link-renderer:has(a[href*="feedback"])',
     'ytm-account-item-section-renderer:has(a[href*="/premium"])',
   ];
-  const css = HIDE.map((s) => s + '{display:none!important}').join('\n');
+  const HIDE_CSS = HIDE.map((s) => s + '{display:none!important}').join('\n');
+  const EXTRA_CSS = `
+    /* Xoá sạch khoảng trống thừa phía trên video khi xem */
+    body.ae-watching #app,
+    body.ae-watching ytm-app,
+    body.ae-watching .page-container,
+    body.ae-watching #player-container-id,
+    body.ae-watching ytm-watch,
+    body.ae-watching .watch-page {
+      padding-top: 0 !important;
+      margin-top: 0 !important;
+    }
+    body.ae-watching .player-container {
+      position: relative !important;
+      top: 0 !important;
+      margin-top: 0 !important;
+    }
+
+    /* Tối ưu bình luận: thu nhỏ khoảng cách để xem được 4-5 comment cùng lúc */
+    ytm-comment-thread-renderer, ytm-comment-renderer {
+      padding: 3px 6px !important;
+      margin: 1px 0 !important;
+    }
+    ytm-comment-renderer .comment-text {
+      font-size: 0.80rem !important;
+      line-height: 1.28 !important;
+      margin: 1px 0 !important;
+    }
+    ytm-comment-renderer .comment-header {
+      margin-bottom: 1px !important;
+    }
+    ytm-engagement-panel-section-list-renderer,
+    ytm-comment-section-renderer {
+      transition: transform 0.32s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.22s ease !important;
+      animation: ae-slide-up 0.30s cubic-bezier(0.25, 1, 0.5, 1) both !important;
+    }
+    @keyframes ae-slide-up {
+      from { transform: translateY(100%); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+  `;
   const addStyle = () => {
     if (document.getElementById('ae-adblock-style')) return;
     const root = document.head || document.documentElement;
     if (!root) return;
     const style = document.createElement('style');
     style.id = 'ae-adblock-style';
-    style.textContent = css;
+    style.textContent = HIDE_CSS + '\n' + EXTRA_CSS;
     root.appendChild(style);
   };
   addStyle();
@@ -287,8 +342,13 @@
     },
     extractDownloadStreams() {
       try {
-        const resp = window.ytInitialPlayerResponse || {};
-        const videoDetails = resp.videoDetails || {};
+        const player = document.querySelector('.html5-video-player') || document.querySelector('#movie_player');
+        let playerResp = null;
+        if (player && typeof player.getPlayerResponse === 'function') {
+          playerResp = player.getPlayerResponse();
+        }
+        const resp = window.__lastPlayerResponse || playerResp || window.ytInitialPlayerResponse || {};
+        const videoDetails = resp.videoDetails || (player?.getVideoData && player.getVideoData()) || {};
         const streamingData = resp.streamingData || {};
         const rawFormats = streamingData.formats || [];
         const rawAdaptive = streamingData.adaptiveFormats || [];
@@ -299,45 +359,56 @@
         const author = videoDetails.author || 'YouTube';
         const duration = parseFloat(videoDetails.lengthSeconds) || 0;
         const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+        // Hàm giải mã URL luồng từ cipher/signatureCipher
+        const resolveStreamUrl = (item) => {
+          if (!item) return null;
+          if (item.url) return item.url;
+          const cipher = item.signatureCipher || item.cipher;
+          if (cipher) {
+            const p = new URLSearchParams(cipher);
+            const raw = p.get('url');
+            if (raw) return decodeURIComponent(raw);
+          }
+          return null;
+        };
         
-        // 1. Tìm luồng âm thanh tốt nhất (ưu tiên AAC/m4a để iOS AVFoundation ghép native)
-        let bestAudio = null;
+        // 1. Tìm luồng âm thanh tốt nhất (ưu tiên AAC/m4a để iOS AVFoundation ghép native tức thì)
+        let bestAudioUrl = null;
         for (const a of rawAdaptive) {
-          if (a.url && a.mimeType && a.mimeType.startsWith('audio/')) {
+          const u = resolveStreamUrl(a);
+          if (u && a.mimeType && a.mimeType.startsWith('audio/')) {
             const isAAC = a.mimeType.includes('mp4a') || a.mimeType.includes('audio/mp4');
-            if (!bestAudio) {
-              bestAudio = a;
-            } else if (isAAC && !bestAudio.mimeType.includes('mp4a')) {
-              bestAudio = a; // Ưu tiên AAC
-            } else if (isAAC && (a.bitrate || 0) > (bestAudio.bitrate || 0)) {
-              bestAudio = a; // Ưu tiên bitrate cao hơn
+            if (!bestAudioUrl || isAAC) {
+              bestAudioUrl = u;
+              if (isAAC) break;
             }
           }
         }
         
-        const qualityMap = new Map(); // height -> stream object
+        const qualityMap = new Map();
         
         // 2. Quét các luồng Adaptive chất lượng cao (1080p, 1440p 2K, 4K, 720p)
         for (const v of rawAdaptive) {
-          if (!v.url || !v.mimeType || !v.mimeType.startsWith('video/')) continue;
+          if (!v.mimeType || !v.mimeType.startsWith('video/')) continue;
+          const u = resolveStreamUrl(v);
+          if (!u) continue;
           const h = v.height || parseInt(v.qualityLabel) || 0;
-          // BỎ TOÀN BỘ < 720p (360p, 480p bị loại bỏ hoàn toàn)
-          if (h < 720) continue;
+          if (h < 720) continue; // Loại bỏ hoàn toàn 360p, 480p
           
-          const isH264 = v.mimeType.includes('avc1') || v.mimeType.includes('mp4');
           let label = v.qualityLabel || `${h}p`;
           if (h >= 2160) label = '2160p (4K Ultra HD)';
           else if (h >= 1440) label = '1440p (2K QHD)';
           else if (h >= 1080) label = '1080p Full HD';
           else if (h >= 720) label = '720p HD';
           
-          // Ưu tiên codec H.264 (avc1) để iOS ghép file passthrough tức thì
+          const isH264 = v.mimeType.includes('avc1') || v.mimeType.includes('mp4');
           if (!qualityMap.has(h) || isH264) {
             qualityMap.set(h, {
               quality: label,
               height: h,
-              url: v.url,
-              audioUrl: bestAudio ? bestAudio.url : null,
+              url: u,
+              audioUrl: bestAudioUrl,
               mimeType: v.mimeType
             });
           }
@@ -345,9 +416,10 @@
         
         // 3. Quét các luồng Progressive (đã có sẵn cả hình và tiếng, chỉ lấy >= 720p)
         for (const f of rawFormats) {
-          if (!f.url) continue;
+          const u = resolveStreamUrl(f);
+          if (!u) continue;
           const h = f.height || parseInt(f.qualityLabel) || 0;
-          if (h < 720) continue; // Bỏ qua 360p, 480p
+          if (h < 720) continue;
           
           let label = f.qualityLabel || `${h}p`;
           if (h >= 720 && !label.includes('HD')) label = '720p HD';
@@ -356,14 +428,25 @@
             qualityMap.set(h, {
               quality: label,
               height: h,
-              url: f.url,
-              audioUrl: null, // Đã có sẵn tiếng
+              url: u,
+              audioUrl: null,
               mimeType: f.mimeType
             });
           }
         }
+
+        // 4. Fallback: Nếu YouTube không đưa ra adaptive qua API, lấy luồng đang nạp trên <video>
+        const activeVideo = document.querySelector('video');
+        if (qualityMap.size === 0 && activeVideo && activeVideo.src && activeVideo.src.startsWith('http')) {
+          qualityMap.set(720, {
+            quality: '720p HD (Trực tiếp)',
+            height: 720,
+            url: activeVideo.src,
+            audioUrl: null,
+            mimeType: 'video/mp4'
+          });
+        }
         
-        // Sắp xếp thứ tự từ cao nhất xuống thấp nhất (1440p -> 1080p -> 720p)
         const sortedStreams = Array.from(qualityMap.values())
           .sort((a, b) => b.height - a.height);
         
@@ -380,6 +463,30 @@
       }
     }
   };
+
+  // ── 5. Hỗ trợ xoay ngang màn hình toàn màn hình (Landscape Fullscreen) ──────
+  document.addEventListener('click', (e) => {
+    const fsBtn = e.target.closest('.fullscreen-icon, .ytp-fullscreen-button, button[aria-label*="Fullscreen"], button[aria-label*="Toàn màn hình"], button[aria-label*="toàn màn hình"]');
+    if (fsBtn) {
+      const v = currentVideo();
+      if (v && v.webkitEnterFullscreen) {
+        e.preventDefault();
+        e.stopPropagation();
+        v.webkitEnterFullscreen();
+      }
+    }
+  }, true);
+
+  // Tự động vào Native iOS Fullscreen khi người dùng xoay ngang điện thoại lúc xem video
+  window.addEventListener('orientationchange', () => {
+    if (location.pathname.startsWith('/watch')) {
+      const isLandscape = Math.abs(window.orientation) === 90;
+      const v = currentVideo();
+      if (isLandscape && v && v.webkitEnterFullscreen && !v.webkitDisplayingFullscreen) {
+        v.webkitEnterFullscreen();
+      }
+    }
+  });
 
   // Lắng nghe trạng thái video để đồng bộ lên Lock Screen
   document.addEventListener('play', (e) => {

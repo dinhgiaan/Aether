@@ -1,11 +1,11 @@
-// Aether UI Enhancement – Liquid-Glass bottom nav + gestures + branding + animations
+// Aether UI Enhancement – Liquid-Glass bottom nav + gestures + branding + animations + downloads tab
 (() => {
   'use strict';
   if (window.__aeUI) return;
   if (!/(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname)) return;
   window.__aeUI = true;
 
-  // ── 1. CSS: Liquid-Glass + Modern Typography + Search + Comments ───────────
+  // ── 1. CSS: Liquid-Glass + Search + Header + Comments ──────────────────────
   const CSS = `
     /* ── Bottom bar: floating capsule ───────────────────────────────────── */
     ytm-bottom-bar-renderer {
@@ -14,11 +14,11 @@
       bottom: calc(env(safe-area-inset-bottom, 0px) + 14px) !important;
       transform: translate3d(-50%, 0, 0) !important;
       width: auto !important;
-      min-width: min(290px, 86vw) !important;
+      min-width: min(320px, 90vw) !important;
       border-radius: 999px !important;
 
       /* Liquid Glass Apple Style */
-      background: rgba(16, 16, 20, 0.68) !important;
+      background: rgba(16, 16, 20, 0.72) !important;
       backdrop-filter: blur(40px) saturate(1.9) brightness(1.08) !important;
       -webkit-backdrop-filter: blur(40px) saturate(1.9) brightness(1.08) !important;
       border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
@@ -49,19 +49,19 @@
       padding: 4px 6px !important;
       display: flex !important;
       justify-content: space-around !important;
+      align-items: center !important;
     }
 
-    ytm-pivot-bar-item-renderer {
+    ytm-pivot-bar-item-renderer, .ae-dl-tab {
       flex: none !important;
-      min-width: 56px !important;
+      min-width: 54px !important;
       border-radius: 999px !important;
-      padding: 7px 14px !important;
+      padding: 6px 12px !important;
       transition:
         background 0.18s ease,
         transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
     }
 
-    /* Active tab highlight pill */
     ytm-pivot-bar-item-renderer.iron-selected {
       background: rgba(255, 255, 255, 0.14) !important;
     }
@@ -71,55 +71,59 @@
       padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 85px) !important;
     }
 
-    /* ── Header hiện đại ─────────────────────────────────────────────────── */
+    /* ── Header hiện đại & Logo có lề chuẩn ──────────────────────────────── */
     .mobile-topbar-header, ytm-mobile-topbar-renderer {
       background: rgba(12, 12, 15, 0.85) !important;
       backdrop-filter: blur(24px) !important;
       -webkit-backdrop-filter: blur(24px) !important;
       border-bottom: 0.5px solid rgba(255, 255, 255, 0.08) !important;
+      padding-left: 12px !important;
     }
 
-    /* ── Tìm kiếm & Lịch sử tìm kiếm giao diện kính Liquid-Glass ─────────── */
-    ytm-search-box, .search-box-wrapper {
+    .header-bar-logo, ytm-home-logo, .topbar-header-logo-icon, a.mobile-topbar-header-endpoint, .ytm-mobile-topbar-renderer-logo {
+      margin-left: 8px !important;
+      padding-left: 2px !important;
+    }
+
+    /* ── Custom UI/UX Tìm kiếm Liquid-Glass cao cấp ──────────────────────── */
+    ytm-search-box, .search-box-wrapper, form.search-form {
       border-radius: 999px !important;
-      background: rgba(255, 255, 255, 0.09) !important;
-      border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+      background: rgba(255, 255, 255, 0.08) !important;
+      backdrop-filter: blur(20px) !important;
+      -webkit-backdrop-filter: blur(20px) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+      transition: all 0.2s ease !important;
     }
-    
+
+    ytm-search-box:focus-within, .search-box-wrapper:focus-within {
+      background: rgba(255, 255, 255, 0.14) !important;
+      border-color: rgba(255, 45, 85, 0.45) !important;
+      box-shadow: 0 4px 20px rgba(255, 45, 85, 0.18) !important;
+    }
+
+    .search-box-input {
+      font-size: 15px !important;
+      color: #ffffff !important;
+      padding: 8px 14px !important;
+    }
+
+    /* Gợi ý tìm kiếm kính mờ */
     .compact-link, ytm-search-suggestion, ytm-history-suggestion-renderer {
-      border-radius: 12px !important;
-      margin: 3px 8px !important;
-      padding: 10px 14px !important;
-      transition: background 0.15s ease !important;
-      border: none !important;
-    }
-    
-    .compact-link:active, ytm-search-suggestion:active {
-      background: rgba(255, 255, 255, 0.12) !important;
+      border-radius: 14px !important;
+      margin: 4px 10px !important;
+      padding: 11px 16px !important;
+      background: rgba(255, 255, 255, 0.04) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.06) !important;
+      transition: all 0.15s ease !important;
     }
 
-    /* ── Tối ưu phần bình luận: giảm 15% kích thước chữ, layout thẻ bo tròn ─ */
-    ytm-comment-renderer, .comment-thread-renderer {
-      font-size: 0.85rem !important;
-      padding: 8px 0 !important;
-    }
-    ytm-comment-renderer .comment-text {
-      font-size: 0.85rem !important;
-      line-height: 1.38 !important;
-      color: #e2e2e8 !important;
-    }
-    ytm-comment-renderer .comment-author {
-      font-size: 0.78rem !important;
-      font-weight: 600 !important;
-    }
-    ytm-comment-section-renderer {
-      border-radius: 20px 20px 0 0 !important;
-      background: rgba(18, 18, 22, 0.95) !important;
-      backdrop-filter: blur(30px) !important;
-      -webkit-backdrop-filter: blur(30px) !important;
+    .compact-link:active, ytm-search-suggestion:active, ytm-history-suggestion-renderer:active {
+      background: rgba(255, 255, 255, 0.14) !important;
+      transform: scale(0.99) !important;
     }
 
-    /* ── Chuyển trang mượt mà ────────────────────────────────────────────── */
+    /* Chuyển trang mượt mà */
     ytm-section-list-renderer, ytm-search-results-section-renderer {
       animation: ae-fadein 0.2s ease both !important;
     }
@@ -141,7 +145,7 @@
   injectCSS();
   document.addEventListener('DOMContentLoaded', injectCSS, { once: true });
 
-  // ── 2. Thay thế logo YouTube trên Header thành Aether ─────────────────────
+  // ── 2. Thay thế logo YouTube trên Header thành Aether (có khoảng cách) ────
   const replaceLogoWithAether = () => {
     const logoTargets = document.querySelectorAll(
       '.header-bar-logo, ytm-home-logo, .topbar-header-logo-icon, a.mobile-topbar-header-endpoint, .ytm-mobile-topbar-renderer-logo'
@@ -150,15 +154,15 @@
       if (el.dataset.aetherLogo) return;
       el.dataset.aetherLogo = 'true';
       el.innerHTML = `
-        <div style="display:flex;align-items:center;gap:6px;font-family:-apple-system,sans-serif;font-weight:800;font-size:19px;letter-spacing:-0.5px;text-decoration:none;">
-          <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ff2222;box-shadow:0 0 8px #ff2222;"></span>
-          <span style="background:linear-gradient(135deg,#ffffff 20%,#ff3333 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Aether</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:10px;padding-left:4px;font-family:-apple-system,sans-serif;font-weight:800;font-size:19px;letter-spacing:-0.5px;text-decoration:none;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff2442;box-shadow:0 0 10px #ff2442;"></span>
+          <span style="background:linear-gradient(135deg,#ffffff 20%,#ff334b 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Aether</span>
         </div>
       `;
     });
   };
 
-  // ── 3. Lọc bỏ các mục thừa trong phần Hồ Sơ (Films, Help, Feedback, Premium)
+  // ── 3. Lọc bỏ các mục thừa và thêm thẻ "Video đã tải" trong phần Hồ Sơ ───
   const cleanProfileMenu = () => {
     const unwantedKeywords = ['phim', 'films', 'movies', 'help', 'trợ giúp', 'feedback', 'phản hồi', 'youtube premium'];
     document.querySelectorAll('ytm-compact-link-renderer, ytm-menu-item-renderer').forEach((item) => {
@@ -170,53 +174,139 @@
         }
       }
     });
+
+    // Thêm thẻ "Video đã tải ngoại tuyến" vào Hồ Sơ
+    if (location.pathname.startsWith('/feed/you') || location.pathname.startsWith('/feed/library')) {
+      if (!document.getElementById('ae-profile-dl-card')) {
+        const container = document.querySelector('ytm-item-section-renderer, ytm-section-list-renderer');
+        if (container) {
+          const card = document.createElement('div');
+          card.id = 'ae-profile-dl-card';
+          card.style.cssText = `
+            margin: 12px 14px;
+            padding: 13px 16px;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 0.5px solid rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+          `;
+          card.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,36,66,0.18);display:flex;align-items:center;justify-content:center;">
+                <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:none;stroke:#ff334b;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="8 12 12 16 16 12"></polyline>
+                  <line x1="12" y1="8" x2="12" y2="16"></line>
+                </svg>
+              </div>
+              <div>
+                <div style="font-size:14px;font-weight:700;color:#fff;">Video đã tải ngoại tuyến</div>
+                <div style="font-size:11px;color:#aaa;margin-top:2px;">Xem lại mọi lúc không cần mạng</div>
+              </div>
+            </div>
+            <div style="color:#aaa;font-size:18px;">›</div>
+          `;
+          card.addEventListener('click', () => {
+            try {
+              window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
+            } catch (_) {}
+          });
+          container.prepend(card);
+        }
+      }
+    }
   };
 
-  // ── 4. Vuốt video xuống để về trang chủ (Swipe down gesture on video) ──────
-  const setupVideoSwipeGesture = () => {
-    let startY = 0;
-    let startX = 0;
-    let isSwiping = false;
+  // ── 4. Thêm Tab "Đã tải" riêng vào Bottom Bar ──────────────────────────────
+  const injectDownloadsTab = () => {
+    const pivot = document.querySelector('ytm-pivot-bar-renderer');
+    if (!pivot || document.getElementById('ae-downloads-tab')) return;
 
-    const player = document.querySelector('.html5-video-player');
-    if (!player || player.dataset.swipeSetup) return;
-    player.dataset.swipeSetup = 'true';
+    const tab = document.createElement('div');
+    tab.id = 'ae-downloads-tab';
+    tab.className = 'ae-dl-tab';
+    tab.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    `;
+    tab.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;position:relative;">
+        <svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="8 12 12 16 16 12"></polyline>
+          <line x1="12" y1="8" x2="12" y2="16"></line>
+        </svg>
+      </div>
+      <span style="font-size:10px;font-weight:600;color:#fff;margin-top:3px;">Đã tải</span>
+    `;
 
-    player.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 1) {
+    tab.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      tab.style.transform = 'scale(0.88)';
+      setTimeout(() => { tab.style.transform = ''; }, 160);
+      try {
+        window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
+      } catch (_) {}
+    });
+
+    // Chèn trước tab Hồ sơ
+    const lastItem = pivot.lastElementChild;
+    if (lastItem) {
+      pivot.insertBefore(tab, lastItem);
+    } else {
+      pivot.appendChild(tab);
+    }
+  };
+
+  // ── 5. Vuốt video xuống để thu nhỏ PiP / quay về trang trước không bị ngắt ─
+  let startY = 0;
+  let startX = 0;
+  let isVideoTouch = false;
+
+  window.addEventListener('touchstart', (e) => {
+    if (!location.pathname.startsWith('/watch')) return;
+    if (e.touches.length === 1) {
+      const t = e.target;
+      if (t && t.closest('.html5-video-player, #player-container-id, video, .player-control-overlay, .ytm-video-player-container')) {
+        isVideoTouch = true;
         startY = e.touches[0].clientY;
         startX = e.touches[0].clientX;
-        isSwiping = false;
+      } else {
+        isVideoTouch = false;
       }
-    }, { passive: true });
+    }
+  }, { capture: true, passive: true });
 
-    player.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 1) {
-        const deltaY = e.touches[0].clientY - startY;
-        const deltaX = Math.abs(e.touches[0].clientX - startX);
-        if (deltaY > 30 && deltaX < 40) {
-          isSwiping = true;
+  window.addEventListener('touchend', (e) => {
+    if (!isVideoTouch || e.changedTouches.length !== 1) return;
+    const deltaY = e.changedTouches[0].clientY - startY;
+    const deltaX = Math.abs(e.changedTouches[0].clientX - startX);
+    if (deltaY > 55 && deltaX < 45) {
+      // Kích hoạt PiP trước để video tiếp tục phát nổi không bị tắt
+      try {
+        if (window.__aeMedia && window.__aeMedia.togglePiP) {
+          window.__aeMedia.togglePiP();
         }
+      } catch (_) {}
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = '/';
       }
-    }, { passive: true });
+    }
+    isVideoTouch = false;
+  }, { capture: true, passive: true });
 
-    player.addEventListener('touchend', (e) => {
-      if (isSwiping && e.changedTouches.length === 1) {
-        const deltaY = e.changedTouches[0].clientY - startY;
-        if (deltaY > 70) {
-          // Vuốt xuống thành công -> quay lại trang trước / trang chủ
-          if (window.history.length > 1) {
-            window.history.back();
-          } else {
-            window.location.href = '/';
-          }
-        }
-      }
-      isSwiping = false;
-    }, { passive: true });
-  };
-
-  // ── 5. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
+  // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
   document.addEventListener('DOMContentLoaded', () => {
     let prev = 0;
     let hidden = false;
@@ -243,28 +333,23 @@
       }
     }, { passive: true });
 
-    const showBar = () => {
+    const refreshUI = () => {
       hidden = false;
       getBar()?.classList.remove('ae-hidden');
-      setTimeout(replaceLogoWithAether, 100);
-      setTimeout(cleanProfileMenu, 250);
-      setTimeout(setupVideoSwipeGesture, 300);
+      replaceLogoWithAether();
+      cleanProfileMenu();
+      injectDownloadsTab();
     };
 
-    window.addEventListener('popstate', showBar);
-    window.addEventListener('ae:navigate', showBar);
+    window.addEventListener('popstate', refreshUI);
+    window.addEventListener('ae:navigate', refreshUI);
 
-    // Báo ngay cho Swift tắt splash screen
     try {
       window.webkit?.messageHandlers?.aetherReady?.postMessage('ready');
     } catch (_) {}
 
-    // Chạy các tác vụ làm đẹp ban đầu
-    replaceLogoWithAether();
-    cleanProfileMenu();
-    setupVideoSwipeGesture();
+    refreshUI();
 
-    // Quan sát thay đổi DOM với requestAnimationFrame throttling để đạt 120Hz mượt mà tuyệt đối
     let moScheduled = false;
     const observer = new MutationObserver(() => {
       if (moScheduled) return;
@@ -272,29 +357,29 @@
       window.requestAnimationFrame(() => {
         replaceLogoWithAether();
         cleanProfileMenu();
-        setupVideoSwipeGesture();
+        injectDownloadsTab();
         moScheduled = false;
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }, { once: true });
 
-  // ── 6. Hiệu ứng chạm tab phản hồi xúc giác nhẹ (Spring feedback) ───────────
+  // ── 7. Hiệu ứng chạm tab phản hồi xúc giác nhẹ (Spring feedback) ───────────
   document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('touchstart', (e) => {
-      const tab = e.target.closest('ytm-pivot-bar-item-renderer');
+      const tab = e.target.closest('ytm-pivot-bar-item-renderer, .ae-dl-tab');
       if (tab) tab.style.transform = 'scale(0.88)';
     }, { passive: true });
 
     document.addEventListener('touchend', (e) => {
-      const tab = e.target.closest('ytm-pivot-bar-item-renderer');
+      const tab = e.target.closest('ytm-pivot-bar-item-renderer, .ae-dl-tab');
       if (!tab) return;
       tab.style.transform = 'scale(1.08)';
       setTimeout(() => { if (tab) tab.style.transform = ''; }, 160);
     }, { passive: true });
 
     document.addEventListener('touchcancel', (e) => {
-      const tab = e.target.closest('ytm-pivot-bar-item-renderer');
+      const tab = e.target.closest('ytm-pivot-bar-item-renderer, .ae-dl-tab');
       if (tab) tab.style.transform = '';
     }, { passive: true });
   }, { once: true });
