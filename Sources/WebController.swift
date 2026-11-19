@@ -188,8 +188,14 @@ final class WebController: NSObject, ObservableObject {
     }
 
     private static func loadResource(_ name: String, _ ext: String) -> String? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return nil }
-        return try? String(contentsOf: url, encoding: .utf8)
+        let bundles = [Bundle(for: WebController.self), Bundle.main]
+        for bundle in bundles {
+            if let url = bundle.url(forResource: name, withExtension: ext),
+               let content = try? String(contentsOf: url, encoding: .utf8) {
+                return content
+            }
+        }
+        return nil
     }
     
     // MARK: - Trung tâm điều khiển & Lock Screen (MPRemoteCommandCenter)
