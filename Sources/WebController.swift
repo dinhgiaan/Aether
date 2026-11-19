@@ -1,5 +1,6 @@
 import UIKit
 import WebKit
+import MediaPlayer
 
 enum Config {
     static let home = URL(string: "https://m.youtube.com/")!
@@ -15,21 +16,44 @@ enum Config {
     ]
 }
 
+struct StreamOption: Identifiable, Codable {
+    var id: String { quality + "_" + (mimeType ?? "") }
+    let quality: String
+    let url: String
+    let audioURL: String?
+    let mimeType: String?
+}
+
+struct VideoDownloadInfo: Identifiable {
+    let id: String
+    let title: String
+    let author: String
+    let duration: Double
+    let thumbnailURL: String?
+    let streams: [StreamOption]
+}
+
 @MainActor
 final class WebController: NSObject, ObservableObject {
     @Published var isWatching = false
     /// true từ lúc app mở đến khi trang YouTube đầu tiên load xong → ẩn splash
     @Published var isInitialLoading = true
-
+    /// Thông tin download khi người dùng bấm Tải xuống video hiện tại
+    @Published var activeDownloadInfo: VideoDownloadInfo?
+    @Published var showDownloadSheet = false
+    @Published var showOfflineLibrary = false
+    
     let webView: WKWebView
     private let contentController = WKUserContentController()
     private var urlObservation: NSKeyValueObservation?
+    private var splashFallbackTimer: Task<Void, Never>?
 
     override init() {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.allowsPictureInPictureMediaPlayback = true
+        config.preferences.isElementFullscreenEnabled = true
         config.websiteDataStore = .default() // lưu cookie đăng nhập
         config.userContentController = contentController
 
@@ -39,7 +63,7 @@ final class WebController: NSObject, ObservableObject {
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             )
         }
-        // UI enhancement: Liquid-Glass bottom nav + animations. Chỉ main frame
+        // UI enhancement: Liquid-Glass bottom nav + animations + gesture. Chỉ main frame
         if let js = WebController.loadResource("uienhance", "js") {
             contentController.addUserScript(
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -48,6 +72,13 @@ final class WebController: NSObject, ObservableObject {
 
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
+
+        // Message handlers kết nối JS với Swift Native
+        let proxy = WeakScriptProxy(target: self)
+        contentController.add(proxy, name: "aetherReady")
+        contentController.add(proxy, name: "nowPlaying")
+        contentController.add(proxy, name: "downloadData")
+        contentController.add(proxy, name: "aetherNav")
 
         webView.customUserAgent = Config.userAgent
         webView.allowsBackForwardNavigationGestures = true
@@ -59,7 +90,7 @@ final class WebController: NSObject, ObservableObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
 
-        // YouTube là SPA: URL đổi bằng pushState nên phải theo dõi bằng KVO
+        // YouTube là SPA: URL đổi bằng pushState nên theo dõi bằng KVO
         urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             Task { @MainActor in self?.updateWatching() }
         }
@@ -68,11 +99,32 @@ final class WebController: NSObject, ObservableObject {
         nc.addObserver(self, selector: #selector(willResign), name: UIApplication.willResignActiveNotification, object: nil)
         nc.addObserver(self, selector: #selector(didBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(willForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+        
+        setupRemoteCommands()
+        
+        // Timer dự phòng tối đa 1.4s để tắt splash screen nếu mạng chậm
+        splashFallbackTimer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            await MainActor.run {
+                self?.dismissSplash()
+            }
+        }
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
         urlObservation?.invalidate()
+        splashFallbackTimer?.cancel()
+        contentController.removeScriptMessageHandler(forName: "aetherReady")
+        contentController.removeScriptMessageHandler(forName: "nowPlaying")
+        contentController.removeScriptMessageHandler(forName: "downloadData")
+        contentController.removeScriptMessageHandler(forName: "aetherNav")
+    }
+
+    func dismissSplash() {
+        if isInitialLoading {
+            isInitialLoading = false
+        }
     }
 
     // Nạp rule chặn request trước rồi mới load trang, tránh ad lọt lúc khởi động
@@ -83,7 +135,6 @@ final class WebController: NSObject, ObservableObject {
     }
 
     // Cache-aware: thử lấy blocklist đã compile từ disk, chỉ compile lại khi chưa có.
-    // Version làm suffix của id → update blocklist.json trong bản mới sẽ tự recompile.
     private func loadBlocklist() async {
         guard let store = WKContentRuleListStore.default() else {
             NSLog("Aether: không thể khởi tạo WKContentRuleListStore")
@@ -112,7 +163,20 @@ final class WebController: NSObject, ObservableObject {
     }
 
     func togglePiP() {
+        // Thực thi trong .page world để truy cập trực tiếp window.__aeMedia và HTMLVideoElement
         run("window.__aeMedia && window.__aeMedia.togglePiP()")
+    }
+    
+    func goBackToHome() {
+        if webView.canGoBack {
+            webView.goBack()
+        } else {
+            webView.load(URLRequest(url: Config.home))
+        }
+    }
+    
+    func requestDownload() {
+        run("window.__aeMedia && window.__aeMedia.extractDownloadStreams()")
     }
 
     private func updateWatching() {
@@ -121,20 +185,154 @@ final class WebController: NSObject, ObservableObject {
         isWatching = path.hasPrefix("/watch")
     }
 
-    // MARK: - Giữ phát nền
-    // Native báo cho JS trước/sau khi app bị đưa xuống nền để JS tự resume video bị WebKit pause
+    // MARK: - Giữ phát nền & Lock screen
     @objc private func willResign() { run("window.__aeMedia && window.__aeMedia.remember()") }
     @objc private func didBackground() { run("window.__aeMedia && window.__aeMedia.enterBackground()") }
     @objc private func willForeground() { run("window.__aeMedia && window.__aeMedia.enterForeground()") }
 
-    private func run(_ js: String) {
-        // Dùng API mới với WKContentWorld để tránh deprecation warning (iOS 14+)
-        webView.evaluateJavaScript(js, in: nil, in: .defaultClient, completionHandler: nil)
+    func run(_ js: String) {
+        // Luôn chạy trong .page content world nơi code JavaScript nhúng tồn tại
+        webView.evaluateJavaScript(js, in: nil, in: .page, completionHandler: nil)
     }
 
     private static func loadResource(_ name: String, _ ext: String) -> String? {
         guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return nil }
         return try? String(contentsOf: url, encoding: .utf8)
+    }
+    
+    // MARK: - Trung tâm điều khiển & Lock Screen (MPRemoteCommandCenter)
+    private func setupRemoteCommands() {
+        let rcc = MPRemoteCommandCenter.shared()
+        
+        rcc.playCommand.isEnabled = true
+        rcc.playCommand.addTarget { [weak self] _ in
+            self?.run("window.__aeMedia && window.__aeMedia.resume()")
+            return .success
+        }
+        
+        rcc.pauseCommand.isEnabled = true
+        rcc.pauseCommand.addTarget { [weak self] _ in
+            self?.run("window.__aeMedia && window.__aeMedia.pause()")
+            return .success
+        }
+        
+        rcc.togglePlayPauseCommand.isEnabled = true
+        rcc.togglePlayPauseCommand.addTarget { [weak self] _ in
+            self?.run("window.__aeMedia && window.__aeMedia.togglePlay()")
+            return .success
+        }
+        
+        rcc.changePlaybackPositionCommand.isEnabled = true
+        rcc.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let posEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self?.run("window.__aeMedia && window.__aeMedia.seek(\(posEvent.positionTime))")
+            return .success
+        }
+        
+        rcc.skipForwardCommand.isEnabled = true
+        rcc.skipForwardCommand.preferredIntervals = [10]
+        rcc.skipForwardCommand.addTarget { [weak self] _ in
+            self?.run("window.__aeMedia && window.__aeMedia.skip(10)")
+            return .success
+        }
+        
+        rcc.skipBackwardCommand.isEnabled = true
+        rcc.skipBackwardCommand.preferredIntervals = [10]
+        rcc.skipBackwardCommand.addTarget { [weak self] _ in
+            self?.run("window.__aeMedia && window.__aeMedia.skip(-10)")
+            return .success
+        }
+    }
+    
+    func updateNowPlaying(dict: [String: Any]) {
+        let title = dict["title"] as? String ?? "Aether Video"
+        let author = dict["author"] as? String ?? "YouTube"
+        let duration = dict["duration"] as? Double ?? 0
+        let currentTime = dict["currentTime"] as? Double ?? 0
+        let isPlaying = dict["isPlaying"] as? Bool ?? true
+        let thumbnail = dict["thumbnail"] as? String
+        
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: author,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        
+        if let thumbStr = thumbnail, let url = URL(string: thumbStr) {
+            Task.detached(priority: .background) {
+                if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+                    let artwork = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+                    Task { @MainActor in
+                        var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                        current[MPMediaItemPropertyArtwork] = artwork
+                        MPNowPlayingInfoCenter.default().nowPlayingInfo = current
+                    }
+                }
+            }
+        }
+    }
+    
+    func handleDownloadPayload(dict: [String: Any]) {
+        guard let videoId = dict["videoId"] as? String,
+              let title = dict["title"] as? String else { return }
+        let author = dict["author"] as? String ?? ""
+        let duration = dict["duration"] as? Double ?? 0
+        let thumbnail = dict["thumbnail"] as? String
+        
+        var streams: [StreamOption] = []
+        if let rawStreams = dict["formats"] as? [[String: Any]] {
+            for s in rawStreams {
+                if let q = s["quality"] as? String, let u = s["url"] as? String {
+                    let audioU = s["audioUrl"] as? String
+                    let m = s["mimeType"] as? String
+                    streams.append(StreamOption(quality: q, url: u, audioURL: audioU, mimeType: m))
+                }
+            }
+        }
+        
+        activeDownloadInfo = VideoDownloadInfo(
+            id: videoId,
+            title: title,
+            author: author,
+            duration: duration,
+            thumbnailURL: thumbnail,
+            streams: streams
+        )
+        showDownloadSheet = true
+    }
+}
+
+// MARK: - Script Message Handler Proxy (Weak to avoid retain cycle)
+final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
+    weak var target: WebController?
+    init(target: WebController) { self.target = target }
+    
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        Task { @MainActor in
+            guard let target = target else { return }
+            switch message.name {
+            case "aetherReady":
+                target.dismissSplash()
+            case "nowPlaying":
+                if let dict = message.body as? [String: Any] {
+                    target.updateNowPlaying(dict: dict)
+                }
+            case "downloadData":
+                if let dict = message.body as? [String: Any] {
+                    target.handleDownloadPayload(dict: dict)
+                }
+            case "aetherNav":
+                if let dict = message.body as? [String: Any], let watching = dict["isWatching"] as? Bool {
+                    target.isWatching = watching
+                }
+            default:
+                break
+            }
+        }
     }
 }
 
@@ -168,7 +366,7 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
 
     // Splash ẩn khi trang đầu tiên load xong thành công
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if isInitialLoading { isInitialLoading = false }
+        dismissSplash()
     }
 
     // Link target=_blank: load ngay trong webview nếu domain được phép, nếu không mở Safari
@@ -192,7 +390,7 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
 
     // Hiện trang lỗi thân thiện khi mất mạng / server không phản hồi
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        isInitialLoading = false   // ẩn splash dù load lỗi
+        dismissSplash()
         let nsErr = error as NSError
         // Bỏ qua lỗi "bị cancel" do chính app cancel (ví dụ chặn deep link)
         guard nsErr.domain != NSURLErrorDomain || nsErr.code != NSURLErrorCancelled else { return }
