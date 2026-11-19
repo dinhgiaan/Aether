@@ -73,47 +73,89 @@
 
     /* ── Header hiện đại & Logo có lề chuẩn ──────────────────────────────── */
     .mobile-topbar-header, ytm-mobile-topbar-renderer {
-      background: rgba(12, 12, 15, 0.88) !important;
+      background: rgba(12, 12, 15, 0.90) !important;
       backdrop-filter: blur(28px) !important;
       -webkit-backdrop-filter: blur(28px) !important;
       border-bottom: 0.5px solid rgba(255, 255, 255, 0.08) !important;
-      padding-left: 16px !important;
+      padding-left: 0 !important;
     }
 
+    /* Chỉ căn lề riêng cho logo Aether ở trang chủ, KHÔNG làm lệch thanh tìm kiếm */
     .header-bar-logo, ytm-home-logo, .topbar-header-logo-icon, a.mobile-topbar-header-endpoint, .ytm-mobile-topbar-renderer-logo {
       margin-left: 14px !important;
       padding-left: 2px !important;
     }
 
-    /* ── Custom UI/UX Tìm kiếm Liquid-Glass cao cấp ──────────────────────── */
+    /* ── Custom UI/UX Tìm kiếm Liquid-Glass cao cấp & Cân đối 100% ────────── */
     ytm-search-page, .search-box-wrapper {
       background: #000000 !important;
     }
 
+    /* Cân chỉnh thanh header tìm kiếm đối xứng hai bên */
+    .mobile-topbar-header:has(form.search-form),
+    ytm-mobile-topbar-renderer:has(form.search-form),
+    .search-header {
+      padding: 6px 12px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      box-sizing: border-box !important;
+    }
+
+    /* Nút mũi tên quay lại */
+    ytm-mobile-topbar-renderer .topbar-back-button,
+    ytm-mobile-topbar-renderer button[aria-label*="Back"],
+    ytm-mobile-topbar-renderer button[aria-label*="Quay lại"] {
+      margin-left: 2px !important;
+      margin-right: 4px !important;
+      color: #ffffff !important;
+      flex-shrink: 0 !important;
+    }
+
+    /* Khung nhập tìm kiếm viên thuốc mượt mà */
     ytm-search-box, form.search-form {
+      flex: 1 !important;
+      height: 38px !important;
       border-radius: 999px !important;
-      background: rgba(255, 255, 255, 0.09) !important;
+      background: rgba(255, 255, 255, 0.10) !important;
       backdrop-filter: blur(24px) !important;
       -webkit-backdrop-filter: blur(24px) !important;
       border: 0.5px solid rgba(255, 255, 255, 0.18) !important;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4) !important;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35) !important;
       transition: all 0.2s ease !important;
-      padding: 2px 10px !important;
-      margin: 4px 8px !important;
+      padding: 0 12px !important;
+      margin: 0 6px !important;
+      display: flex !important;
+      align-items: center !important;
+      box-sizing: border-box !important;
     }
 
     ytm-search-box:focus-within, form.search-form:focus-within {
-      background: rgba(255, 255, 255, 0.15) !important;
+      background: rgba(255, 255, 255, 0.16) !important;
       border-color: rgba(255, 45, 85, 0.5) !important;
-      box-shadow: 0 4px 22px rgba(255, 45, 85, 0.2) !important;
+      box-shadow: 0 4px 22px rgba(255, 45, 85, 0.22) !important;
     }
 
     .search-box-input, input[name="search_query"] {
+      flex: 1 !important;
       font-size: 15px !important;
       font-weight: 500 !important;
       color: #ffffff !important;
-      padding: 8px 12px !important;
+      padding: 0 8px !important;
       background: transparent !important;
+      border: none !important;
+      outline: none !important;
+      height: 100% !important;
+    }
+
+    /* Nút micro giọng nói */
+    .voice-search-button,
+    button[aria-label*="Voice"],
+    button[aria-label*="giọng nói"] {
+      margin-left: 4px !important;
+      margin-right: 2px !important;
+      color: #ffffff !important;
+      flex-shrink: 0 !important;
     }
 
     /* Container danh sách lịch sử & gợi ý tìm kiếm */
@@ -121,45 +163,80 @@
     .search-suggestions-container,
     .search-history-container {
       background: #000000 !important;
-      padding: 6px 12px !important;
+      padding: 8px 12px !important;
+      box-sizing: border-box !important;
     }
 
-    /* Gợi ý tìm kiếm & Lịch sử kính mờ Apple Card */
+    /* Mỗi dòng gợi ý & lịch sử: Căn lề chuẩn flex-start, không bị thụt thò */
     .compact-link,
     ytm-search-suggestion,
     ytm-history-suggestion-renderer,
     .search-suggestion-item {
-      border-radius: 12px !important;
-      margin: 4px 0 !important;
+      border-radius: 14px !important;
+      margin: 6px 0 !important;
       padding: 10px 14px !important;
       background: rgba(255, 255, 255, 0.05) !important;
       border: 0.5px solid rgba(255, 255, 255, 0.08) !important;
       display: flex !important;
       align-items: center !important;
-      justify-content: space-between !important;
+      justify-content: flex-start !important;
       transition: all 0.15s ease !important;
+      box-sizing: border-box !important;
+      overflow: hidden !important;
     }
 
     .compact-link:active,
     ytm-search-suggestion:active,
     ytm-history-suggestion-renderer:active {
       background: rgba(255, 255, 255, 0.12) !important;
-      transform: scale(0.985) !important;
+      transform: scale(0.988) !important;
     }
 
-    /* Xóa màu xanh link cũ, hiển thị text trắng sắc nét */
-    ytm-search-suggestion *,
-    ytm-history-suggestion-renderer *,
-    .compact-link *,
+    /* Thumbnail, Avatar hoặc Icon lịch sử: Căn thẳng hàng, không bị đẩy ra ngoài mép */
+    ytm-history-suggestion-renderer img,
+    ytm-search-suggestion img,
+    .search-suggestion-thumbnail,
+    .search-suggestion-thumbnail-container,
+    .search-suggestion-icon,
+    ytm-history-suggestion-renderer yt-icon,
+    ytm-search-suggestion yt-icon {
+      margin-left: 0 !important;
+      margin-right: 12px !important;
+      width: 28px !important;
+      height: 28px !important;
+      min-width: 28px !important;
+      border-radius: 6px !important;
+      object-fit: cover !important;
+      flex-shrink: 0 !important;
+    }
+
+    /* Text tiêu đề tìm kiếm: Luôn căn thẳng hàng bên trái */
     .search-suggestion-text,
-    .search-suggestion-text span {
+    .search-suggestion-text-container,
+    ytm-history-suggestion-renderer a,
+    ytm-search-suggestion a {
+      flex: 1 !important;
+      display: flex !important;
+      align-items: center !important;
+      text-decoration: none !important;
       color: #ffffff !important;
-      font-size: 14.5px !important;
+      font-size: 15px !important;
       font-weight: 500 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    .search-suggestion-text *,
+    ytm-search-suggestion *,
+    ytm-history-suggestion-renderer * {
+      color: #ffffff !important;
       text-decoration: none !important;
     }
 
-    /* Đổi nút text 'Remove' màu xanh thô kệch thành nút ✕ icon tròn hiện đại phong cách iOS */
+    /* Nút xóa Remove: Đổi thành nút tròn ✕ tinh tế bên lề phải */
     ytm-history-suggestion-renderer button,
     .search-suggestion-remove-button,
     button.search-suggestion-remove {
@@ -168,14 +245,14 @@
       height: 26px !important;
       min-width: 26px !important;
       border-radius: 50% !important;
-      background: rgba(255, 255, 255, 0.10) !important;
-      border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+      background: rgba(255, 255, 255, 0.12) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.20) !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
       position: relative !important;
       cursor: pointer !important;
-      margin-left: 8px !important;
+      margin-left: auto !important;
       padding: 0 !important;
       flex-shrink: 0 !important;
     }
@@ -186,7 +263,7 @@
       content: '✕';
       font-size: 11px;
       font-weight: 700;
-      color: rgba(255, 255, 255, 0.65);
+      color: rgba(255, 255, 255, 0.75);
       line-height: 1;
     }
 
