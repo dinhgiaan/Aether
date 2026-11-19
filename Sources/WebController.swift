@@ -115,10 +115,6 @@ final class WebController: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
         urlObservation?.invalidate()
         splashFallbackTimer?.cancel()
-        contentController.removeScriptMessageHandler(forName: "aetherReady")
-        contentController.removeScriptMessageHandler(forName: "nowPlaying")
-        contentController.removeScriptMessageHandler(forName: "downloadData")
-        contentController.removeScriptMessageHandler(forName: "aetherNav")
     }
 
     func dismissSplash() {
@@ -252,7 +248,7 @@ final class WebController: NSObject, ObservableObject {
         let isPlaying = dict["isPlaying"] as? Bool ?? true
         let thumbnail = dict["thumbnail"] as? String
         
-        var info: [String: Any] = [
+        let info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: author,
             MPMediaItemPropertyPlaybackDuration: duration,

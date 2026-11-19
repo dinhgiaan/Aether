@@ -34,14 +34,14 @@ final class OfflineManager: NSObject, ObservableObject {
     @Published var activeDownloadTitles: [String: String] = [:]
     @Published var activeDownloadStatus: [String: String] = [:] // "Đang tải video...", "Đang ghép âm thanh..."
     
-    static let videosDirectory: URL = {
+    nonisolated static let videosDirectory: URL = {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         let dir = paths[0].appendingPathComponent("OfflineVideos", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
     
-    private static let metadataURL = videosDirectory.appendingPathComponent("offline_metadata.json")
+    private nonisolated static let metadataURL = videosDirectory.appendingPathComponent("offline_metadata.json")
     
     override init() {
         super.init()
@@ -265,21 +265,21 @@ final class OfflineManager: NSObject, ObservableObject {
         let compAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         try compAudioTrack?.insertTimeRange(timeRange, of: audioTrack, at: .zero)
         
-        guard let exportSession = AVAssetExportSession(composition: composition, presetName: AVAssetExportPresetPassthrough) else {
+        guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
             throw NSError(domain: "AetherMux", code: -2, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo AVAssetExportSession"])
         }
         
         try? FileManager.default.removeItem(at: outputURL)
         exportSession.outputURL = outputURL
-        exportSession.outputFileType = .mp4
+        exportSession.outputFileType = AVFileType.mp4
         
-        await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             exportSession.exportAsynchronously {
                 continuation.resume()
             }
         }
         
-        if exportSession.status != .completed {
+        if exportSession.status != AVAssetExportSession.Status.completed {
             throw exportSession.error ?? NSError(domain: "AetherMux", code: -3, userInfo: [NSLocalizedDescriptionKey: "Lỗi xuất file ghép"])
         }
     }

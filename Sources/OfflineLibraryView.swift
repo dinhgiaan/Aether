@@ -12,108 +12,18 @@ struct OfflineLibraryView: View {
                 Color.black.ignoresSafeArea()
                 
                 if offlineManager.downloadedVideos.isEmpty && offlineManager.activeDownloadProgress.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 56, weight: .thin))
-                            .foregroundStyle(.gray)
-                        Text("Chưa có video tải xuống")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                        Text("Khi xem bất kỳ video nào, nhấn nút Tải xuống để lưu xem ngoại tuyến không cần mạng.")
-                            .font(.subheadline)
-                            .foregroundStyle(.gray)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-                    }
+                    EmptyOfflineView()
                 } else {
                     List {
-                        // Section đang tải
                         if !offlineManager.activeDownloadProgress.isEmpty {
-                            Section(header: Text("ĐANG TẢI").foregroundStyle(.gray)) {
-                                ForEach(Array(offlineManager.activeDownloadProgress.keys), id: \.self) { vidId in
-                                    HStack(spacing: 12) {
-                                        ProgressView()
-                                            .tint(.red)
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(offlineManager.activeDownloadTitles[vidId] ?? "Đang tải video...")
-                                                .font(.subheadline)
-                                                .foregroundStyle(.white)
-                                                .lineLimit(1)
-                                            Text(offlineManager.activeDownloadStatus[vidId] ?? "Vui lòng đợi trong giây lát...")
-                                                .font(.caption2)
-                                                .foregroundStyle(.gray)
-                                        }
-                                    }
-                                    .listRowBackground(Color(white: 0.12))
-                                }
-                            }
+                            ActiveDownloadingSection(offlineManager: offlineManager)
                         }
                         
-                        // Section danh sách đã tải
-                        Section(header: Text("VIDEO ĐÃ TẢI (\(offlineManager.downloadedVideos.count))").foregroundStyle(.gray)) {
-                            ForEach(offlineManager.downloadedVideos) { video in
-                                Button {
-                                    playingVideo = video
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        // Thumbnail
-                                        Group {
-                                            if let thumbURL = video.thumbnailURL,
-                                               let uiImg = UIImage(contentsOfFile: thumbURL.path) {
-                                                Image(uiImage: uiImg)
-                                                    .resizable()
-                                                    .aspectRatio(16/9, contentMode: .fill)
-                                            } else {
-                                                Rectangle()
-                                                    .fill(Color(white: 0.2))
-                                                    .overlay(
-                                                        Image(systemName: "play.fill")
-                                                            .foregroundStyle(.white.opacity(0.6))
-                                                    )
-                                            }
-                                        }
-                                        .frame(width: 100, height: 56)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                        
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(video.title)
-                                                .font(.system(size: 14, weight: .medium))
-                                                .foregroundStyle(.white)
-                                                .lineLimit(2)
-                                            
-                                            HStack(spacing: 6) {
-                                                Text(video.author)
-                                                    .font(.caption)
-                                                    .foregroundStyle(.gray)
-                                                Text("•")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.gray)
-                                                Text(video.quality)
-                                                    .font(.caption2)
-                                                    .padding(.horizontal, 4)
-                                                    .padding(.vertical, 1)
-                                                    .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                                                    .foregroundStyle(.white)
-                                            }
-                                        }
-                                        
-                                        Spacer()
-                                        
-                                        Image(systemName: "play.circle.fill")
-                                            .font(.title3)
-                                            .foregroundStyle(.red)
-                                    }
-                                }
-                                .listRowBackground(Color(white: 0.1))
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        offlineManager.deleteVideo(video)
-                                    } label: {
-                                        Label("Xoá", systemName: "trash")
-                                    }
-                                }
-                            }
-                        }
+                        DownloadedListSection(
+                            videos: offlineManager.downloadedVideos,
+                            onPlay: { video in playingVideo = video },
+                            onDelete: { video in offlineManager.deleteVideo(video) }
+                        )
                     }
                     .scrollContentBackground(.hidden)
                 }
@@ -134,6 +44,142 @@ struct OfflineLibraryView: View {
     }
 }
 
+// MARK: – Empty State
+private struct EmptyOfflineView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 56, weight: .thin))
+                .foregroundStyle(.gray)
+            Text("Chưa có video tải xuống")
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text("Khi xem bất kỳ video nào, nhấn nút Tải xuống để lưu xem ngoại tuyến không cần mạng.")
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+    }
+}
+
+// MARK: – Active Downloads Section
+private struct ActiveDownloadingSection: View {
+    @ObservedObject var offlineManager: OfflineManager
+    
+    var body: some View {
+        Section(header: Text("ĐANG TẢI").foregroundStyle(.gray)) {
+            ForEach(Array(offlineManager.activeDownloadProgress.keys), id: \.self) { vidId in
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .tint(.red)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(offlineManager.activeDownloadTitles[vidId] ?? "Đang tải video...")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(offlineManager.activeDownloadStatus[vidId] ?? "Vui lòng đợi trong giây lát...")
+                            .font(.caption2)
+                            .foregroundStyle(.gray)
+                    }
+                }
+                .listRowBackground(Color(white: 0.12))
+            }
+        }
+    }
+}
+
+// MARK: – Downloaded List Section
+private struct DownloadedListSection: View {
+    let videos: [OfflineVideo]
+    let onPlay: (OfflineVideo) -> Void
+    let onDelete: (OfflineVideo) -> Void
+    
+    var body: some View {
+        Section(header: Text("VIDEO ĐÃ TẢI (\(videos.count))").foregroundStyle(.gray)) {
+            ForEach(videos) { video in
+                Button {
+                    onPlay(video)
+                } label: {
+                    DownloadedVideoRow(video: video)
+                }
+                .listRowBackground(Color(white: 0.1))
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        onDelete(video)
+                    } label: {
+                        Label("Xoá", systemName: "trash")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: – Single Video Row
+private struct DownloadedVideoRow: View {
+    let video: OfflineVideo
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VideoThumbnailView(thumbnailURL: video.thumbnailURL)
+                .frame(width: 100, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(video.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                
+                HStack(spacing: 6) {
+                    Text(video.author)
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                    Text("•")
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                    Text(video.quality)
+                        .font(.caption2)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.white)
+                }
+            }
+            
+            Spacer()
+            
+            Image(systemName: "play.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.red)
+        }
+    }
+}
+
+// MARK: – Video Thumbnail
+private struct VideoThumbnailView: View {
+    let thumbnailURL: URL?
+    
+    var body: some View {
+        Group {
+            if let thumbURL = thumbnailURL,
+               let uiImg = UIImage(contentsOfFile: thumbURL.path) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .aspectRatio(16/9, contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(Color(white: 0.2))
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .foregroundStyle(.white.opacity(0.6))
+                    )
+            }
+        }
+    }
+}
+
 /// Bọc AVPlayerViewController để phát offline với đầy đủ tính năng: xoay ngang, PiP, điều khiển
 struct NativeVideoPlayer: UIViewControllerRepresentable {
     let url: URL
@@ -151,4 +197,3 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
 }
-
