@@ -108,7 +108,7 @@ private struct DownloadedListSection: View {
                     Button(role: .destructive) {
                         onDelete(video)
                     } label: {
-                        Label("Xoá", systemName: "trash")
+                        Label("Xoá", systemImage: "trash")
                     }
                 }
             }
