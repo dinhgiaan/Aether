@@ -84,19 +84,27 @@ private struct ActiveDownloadingSection: View {
     var body: some View {
         Section(header: Text("ĐANG TẢI").foregroundStyle(.gray)) {
             ForEach(Array(offlineManager.activeDownloadProgress.keys), id: \.self) { vidId in
-                HStack(spacing: 12) {
-                    ProgressView()
-                        .tint(.red)
-                    VStack(alignment: .leading, spacing: 4) {
+                let progress = offlineManager.activeDownloadProgress[vidId] ?? 0.0
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
                         Text(offlineManager.activeDownloadTitles[vidId] ?? "Đang tải video...")
-                            .font(.subheadline)
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)
-                        Text(offlineManager.activeDownloadStatus[vidId] ?? "Vui lòng đợi trong giây lát...")
-                            .font(.caption2)
-                            .foregroundStyle(.gray)
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.red)
                     }
+                    
+                    ProgressView(value: progress)
+                        .tint(.red)
+                    
+                    Text(offlineManager.activeDownloadStatus[vidId] ?? "Đang kết nối...")
+                        .font(.caption2)
+                        .foregroundStyle(.gray)
                 }
+                .padding(.vertical, 4)
                 .listRowBackground(Color(white: 0.12))
             }
         }

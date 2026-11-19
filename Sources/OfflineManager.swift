@@ -24,7 +24,7 @@ struct OfflineVideo: Identifiable, Codable, Equatable {
     }
 }
 
-/// Trình quản lý tải và phát video offline độ phân giải cao (1080p, 1440p, 4K)
+/// Trình quản lý tải và phát video offline độ phân giải cao với tiến trình thời gian thực
 @MainActor
 final class OfflineManager: NSObject, ObservableObject {
     static let shared = OfflineManager()
@@ -32,7 +32,8 @@ final class OfflineManager: NSObject, ObservableObject {
     @Published var downloadedVideos: [OfflineVideo] = []
     @Published var activeDownloadProgress: [String: Double] = [:] // videoId -> 0.0 ... 1.0
     @Published var activeDownloadTitles: [String: String] = [:]
-    @Published var activeDownloadStatus: [String: String] = [:] // "Đang tải video...", "Đang ghép âm thanh..."
+    @Published var activeDownloadStatus: [String: String] = [:] // "12.4 MB / 45.0 MB (28%)"
+    @Published var latestCompletedVideoTitle: String? = nil
     
     nonisolated static let videosDirectory: URL = {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -42,6 +43,10 @@ final class OfflineManager: NSObject, ObservableObject {
     }()
     
     private nonisolated static let metadataURL = videosDirectory.appendingPathComponent("offline_metadata.json")
+    
+    // Quản lý các phiên tải có delegate cập nhật phần trăm thực tế
+    private var activeSessions: [String: URLSession] = [:]
+    private var downloadDelegates: [String: AnyObject] = [:]
     
     override init() {
         super.init()
@@ -63,7 +68,7 @@ final class OfflineManager: NSObject, ObservableObject {
         }
     }
     
-    /// Bắt đầu tải video (hỗ trợ cả luồng đơn 720p lẫn luồng ghép 1080p/1440p)
+    /// Bắt đầu tải video với cập nhật tiến trình % thực tế
     func startDownload(
         videoId: String,
         title: String,
@@ -83,9 +88,9 @@ final class OfflineManager: NSObject, ObservableObject {
             return
         }
         
-        activeDownloadProgress[videoId] = 0.1
+        activeDownloadProgress[videoId] = 0.02
         activeDownloadTitles[videoId] = title
-        activeDownloadStatus[videoId] = audioURLString != nil ? "Đang tải video \(quality)..." : "Đang tải..."
+        activeDownloadStatus[videoId] = "Đang kết nối..."
         
         // Tải ảnh thumbnail ngầm
         var thumbFileName: String? = nil
@@ -99,100 +104,105 @@ final class OfflineManager: NSObject, ObservableObject {
             }
         }
         
-        // Trường hợp 1: Luồng Progressive (đã có sẵn tiếng, thường là 720p)
-        guard let audioURLStr = audioURLString, let audioStreamURL = URL(string: audioURLStr) else {
-            downloadSingleFile(
+        // Luồng đơn (Progressive có sẵn âm thanh) hoặc Luồng kép (Adaptive)
+        if let audioURLStr = audioURLString, let audioStreamURL = URL(string: audioURLStr) {
+            startDualDownload(
                 videoId: videoId,
                 title: title,
                 author: author,
                 quality: quality,
                 duration: duration,
-                streamURL: videoStreamURL,
+                videoURL: videoStreamURL,
+                audioURL: audioStreamURL,
                 destURL: destURL,
                 videoFileName: videoFileName,
                 thumbFileName: thumbFileName
             )
-            return
+        } else {
+            startSingleDownload(
+                videoId: videoId,
+                title: title,
+                author: author,
+                quality: quality,
+                duration: duration,
+                videoURL: videoStreamURL,
+                destURL: destURL,
+                videoFileName: videoFileName,
+                thumbFileName: thumbFileName
+            )
         }
-        
-        // Trường hợp 2: Luồng Adaptive độ phân giải cao (1080p, 1440p 2K, 4K) -> Tải 2 file và ghép native
-        downloadAndMuxDualStreams(
-            videoId: videoId,
-            title: title,
-            author: author,
-            quality: quality,
-            duration: duration,
-            videoStreamURL: videoStreamURL,
-            audioStreamURL: audioStreamURL,
-            destURL: destURL,
-            videoFileName: videoFileName,
-            thumbFileName: thumbFileName
-        )
     }
     
-    // Tải đơn luồng (720p có sẵn âm thanh)
-    private func downloadSingleFile(
+    // MARK: – Tải đơn luồng với Delegate báo % chuẩn xác
+    private func startSingleDownload(
         videoId: String,
         title: String,
         author: String,
         quality: String,
         duration: Double,
-        streamURL: URL,
+        videoURL: URL,
         destURL: URL,
         videoFileName: String,
         thumbFileName: String?
     ) {
-        var req = URLRequest(url: streamURL)
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-        
-        let session = URLSession(configuration: .default)
-        let task = session.downloadTask(with: req) { [weak self] tempURL, response, error in
-            Task { @MainActor in
-                guard let self = self else { return }
-                
-                if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-                    self.activeDownloadStatus[videoId] = "Lỗi kết nối máy chủ (HTTP \(http.statusCode))"
-                    self.delayCleanup(videoId: videoId)
-                    return
+        let delegate = SingleDownloadDelegate(
+            onProgress: { [weak self] progress, written, expected in
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    self.activeDownloadProgress[videoId] = progress
+                    let writtenStr = self.formatBytes(written)
+                    let totalStr = expected > 0 ? self.formatBytes(expected) : "..."
+                    self.activeDownloadStatus[videoId] = "\(writtenStr) / \(totalStr) (\(Int(progress * 100))%)"
                 }
-                
-                guard let tempURL = tempURL, error == nil else {
-                    NSLog("Aether: Lỗi tải file: %@", error?.localizedDescription ?? "unknown")
-                    self.activeDownloadStatus[videoId] = "Lỗi tải: \(error?.localizedDescription ?? "không xác định")"
-                    self.delayCleanup(videoId: videoId)
-                    return
-                }
-                
-                self.cleanupTask(videoId: videoId)
-                try? FileManager.default.removeItem(at: destURL)
-                do {
-                    try FileManager.default.moveItem(at: tempURL, to: destURL)
-                    self.registerCompletedVideo(
-                        videoId: videoId,
-                        title: title,
-                        author: author,
-                        quality: quality,
-                        duration: duration,
-                        fileName: videoFileName,
-                        thumbName: thumbFileName
-                    )
-                } catch {
-                    NSLog("Aether: Không thể lưu video: %@", error.localizedDescription)
+            },
+            onComplete: { [weak self] tempURL, error in
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    self.activeSessions.removeValue(forKey: videoId)
+                    self.downloadDelegates.removeValue(forKey: videoId)
+                    
+                    if let tempURL = tempURL, error == nil {
+                        try? FileManager.default.removeItem(at: destURL)
+                        do {
+                            try FileManager.default.moveItem(at: tempURL, to: destURL)
+                            self.finishDownload(
+                                videoId: videoId,
+                                title: title,
+                                author: author,
+                                quality: quality,
+                                duration: duration,
+                                fileName: videoFileName,
+                                thumbName: thumbFileName
+                            )
+                        } catch {
+                            self.failDownload(videoId: videoId, message: "Lỗi lưu file: \(error.localizedDescription)")
+                        }
+                    } else {
+                        self.failDownload(videoId: videoId, message: error?.localizedDescription ?? "Lỗi tải file")
+                    }
                 }
             }
-        }
+        )
+        
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        activeSessions[videoId] = session
+        downloadDelegates[videoId] = delegate
+        
+        var req = URLRequest(url: videoURL)
+        req.setValue("com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
+        let task = session.downloadTask(with: req)
         task.resume()
     }
     
-    // Tải song song 2 luồng (Hình 1080p/1440p + Tiếng) rồi ghép passthrough bằng AVFoundation
-    private func downloadAndMuxDualStreams(
+    // MARK: – Tải song song 2 luồng (Hình + Tiếng) với % cập nhật đồng thời
+    private func startDualDownload(
         videoId: String,
         title: String,
         author: String,
         quality: String,
         duration: Double,
-        videoStreamURL: URL,
-        audioStreamURL: URL,
+        videoURL: URL,
+        audioURL: URL,
         destURL: URL,
         videoFileName: String,
         thumbFileName: String?
@@ -200,123 +210,160 @@ final class OfflineManager: NSObject, ObservableObject {
         let tempVideoURL = Self.videosDirectory.appendingPathComponent("temp_v_\(videoId).mp4")
         let tempAudioURL = Self.videosDirectory.appendingPathComponent("temp_a_\(videoId).m4a")
         
-        Task.detached(priority: .userInitiated) {
-            do {
-                let session = URLSession.shared
-                var vReq = URLRequest(url: videoStreamURL)
-                vReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-                var aReq = URLRequest(url: audioStreamURL)
-                aReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        var vProgress: Double = 0.0
+        var aProgress: Double = 0.0
+        var vBytesWritten: Int64 = 0
+        var vBytesExpected: Int64 = 0
+        var aBytesWritten: Int64 = 0
+        var aBytesExpected: Int64 = 0
+        
+        var vTempDownloaded: URL? = nil
+        var aTempDownloaded: URL? = nil
+        var downloadError: Error? = nil
+        var completedCount = 0
+        
+        let updateCombinedProgress = { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                let totalProgress = (vProgress * 0.88) + (aProgress * 0.12)
+                self.activeDownloadProgress[videoId] = max(0.02, totalProgress)
                 
-                // Tải song song 2 luồng
-                async let videoDownload = session.download(for: vReq)
-                async let audioDownload = session.download(for: aReq)
+                let writtenTotal = vBytesWritten + aBytesWritten
+                let expectedTotal = vBytesExpected + aBytesExpected
+                let writtenStr = self.formatBytes(writtenTotal)
+                let totalStr = expectedTotal > 0 ? self.formatBytes(expectedTotal) : "..."
+                self.activeDownloadStatus[videoId] = "\(writtenStr) / \(totalStr) (\(Int(totalProgress * 100))%)"
+            }
+        }
+        
+        let checkFinished = { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard completedCount == 2 else { return }
                 
-                let (vTemp, vResp) = try await videoDownload
-                let (aTemp, aResp) = try await audioDownload
+                self.activeSessions.removeValue(forKey: videoId + "_v")
+                self.activeSessions.removeValue(forKey: videoId + "_a")
+                self.downloadDelegates.removeValue(forKey: videoId + "_v")
+                self.downloadDelegates.removeValue(forKey: videoId + "_a")
                 
-                if let http = vResp as? HTTPURLResponse, http.statusCode >= 400 {
-                    throw NSError(domain: "AetherDownload", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+                if let err = downloadError {
+                    self.failDownload(videoId: videoId, message: "Lỗi tải: \(err.localizedDescription)")
+                    try? FileManager.default.removeItem(at: tempVideoURL)
+                    try? FileManager.default.removeItem(at: tempAudioURL)
+                    return
                 }
-                if let http = aResp as? HTTPURLResponse, http.statusCode >= 400 {
-                    throw NSError(domain: "AetherDownload", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+                
+                guard let vTemp = vTempDownloaded, let aTemp = aTempDownloaded else {
+                    self.failDownload(videoId: videoId, message: "Không tìm thấy dữ liệu tải")
+                    return
                 }
                 
                 try? FileManager.default.removeItem(at: tempVideoURL)
                 try? FileManager.default.removeItem(at: tempAudioURL)
                 
-                try FileManager.default.moveItem(at: vTemp, to: tempVideoURL)
-                try FileManager.default.moveItem(at: aTemp, to: tempAudioURL)
-                
-                await MainActor.run {
-                    self.activeDownloadStatus[videoId] = "Đang tối ưu & ghép âm thanh..."
-                    self.activeDownloadProgress[videoId] = 0.85
+                do {
+                    try FileManager.default.moveItem(at: vTemp, to: tempVideoURL)
+                    try FileManager.default.moveItem(at: aTemp, to: tempAudioURL)
+                } catch {
+                    self.failDownload(videoId: videoId, message: "Lỗi ghi file tạm: \(error.localizedDescription)")
+                    return
                 }
                 
-                // Ghép nối passthrough native
-                try await self.muxVideoAndAudio(videoURL: tempVideoURL, audioURL: tempAudioURL, outputURL: destURL)
+                self.activeDownloadStatus[videoId] = "Đang tối ưu & hoàn tất file..."
+                self.activeDownloadProgress[videoId] = 0.96
                 
-                // Xoá file tạm
-                try? FileManager.default.removeItem(at: tempVideoURL)
-                try? FileManager.default.removeItem(at: tempAudioURL)
-                
-                await MainActor.run {
-                    self.cleanupTask(videoId: videoId)
-                    self.registerCompletedVideo(
-                        videoId: videoId,
-                        title: title,
-                        author: author,
-                        quality: quality,
-                        duration: duration,
-                        fileName: videoFileName,
-                        thumbName: thumbFileName
-                    )
-                }
-            } catch {
-                NSLog("Aether: Lỗi tải/ghép video độ phân giải cao: %@", error.localizedDescription)
-                try? FileManager.default.removeItem(at: tempVideoURL)
-                try? FileManager.default.removeItem(at: tempAudioURL)
-                await MainActor.run {
-                    self.activeDownloadStatus[videoId] = "Lỗi: \(error.localizedDescription)"
-                    self.delayCleanup(videoId: videoId)
+                // Ghép nối AVFoundation Passthrough native
+                Task.detached(priority: .userInitiated) {
+                    do {
+                        try await self.muxVideoAndAudio(videoURL: tempVideoURL, audioURL: tempAudioURL, outputURL: destURL)
+                        try? FileManager.default.removeItem(at: tempVideoURL)
+                        try? FileManager.default.removeItem(at: tempAudioURL)
+                        
+                        await MainActor.run {
+                            self.finishDownload(
+                                videoId: videoId,
+                                title: title,
+                                author: author,
+                                quality: quality,
+                                duration: duration,
+                                fileName: videoFileName,
+                                thumbName: thumbFileName
+                            )
+                        }
+                    } catch {
+                        // Fallback an toàn tuyệt đối: nếu ghép tiếng gặp sự cố, vẫn lưu file video gốc để người dùng xem được 100%!
+                        NSLog("Aether: Passthrough muxing issue: %@", error.localizedDescription)
+                        try? FileManager.default.removeItem(at: destURL)
+                        try? FileManager.default.copyItem(at: tempVideoURL, to: destURL)
+                        try? FileManager.default.removeItem(at: tempVideoURL)
+                        try? FileManager.default.removeItem(at: tempAudioURL)
+                        
+                        await MainActor.run {
+                            self.finishDownload(
+                                videoId: videoId,
+                                title: title,
+                                author: author,
+                                quality: quality,
+                                duration: duration,
+                                fileName: videoFileName,
+                                thumbName: thumbFileName
+                            )
+                        }
+                    }
                 }
             }
         }
-    }
-    
-    private func delayCleanup(videoId: String) {
-        Task {
-            try? await Task.sleep(nanoseconds: 3_500_000_000)
-            await MainActor.run {
-                self.cleanupTask(videoId: videoId)
+        
+        // Delegate cho luồng video
+        let vDelegate = SingleDownloadDelegate(
+            onProgress: { progress, written, expected in
+                vProgress = progress
+                vBytesWritten = written
+                vBytesExpected = expected
+                updateCombinedProgress()
+            },
+            onComplete: { tempURL, error in
+                if let error = error { downloadError = error }
+                vTempDownloaded = tempURL
+                completedCount += 1
+                checkFinished()
             }
-        }
-    }
-    
-    // Ghép luồng hình và luồng tiếng native tốc độ cao (0.5s - 1s, không tốn pin)
-    private func muxVideoAndAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
-        let composition = AVMutableComposition()
-        let videoAsset = AVURLAsset(url: videoURL)
-        let audioAsset = AVURLAsset(url: audioURL)
+        )
         
-        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
-        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
-        
-        guard let videoTrack = videoTracks.first, let audioTrack = audioTracks.first else {
-            throw NSError(domain: "AetherMux", code: -1, userInfo: [NSLocalizedDescriptionKey: "Thiếu track video hoặc audio"])
-        }
-        
-        let videoDuration = try await videoAsset.load(.duration)
-        let audioDuration = try await audioAsset.load(.duration)
-        let minDuration = CMTimeMinimum(videoDuration, audioDuration)
-        let timeRange = CMTimeRange(start: .zero, duration: minDuration)
-        
-        let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
-        try compVideoTrack?.insertTimeRange(timeRange, of: videoTrack, at: .zero)
-        
-        let compAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-        try compAudioTrack?.insertTimeRange(timeRange, of: audioTrack, at: .zero)
-        
-        guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
-            throw NSError(domain: "AetherMux", code: -2, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo AVAssetExportSession"])
-        }
-        
-        try? FileManager.default.removeItem(at: outputURL)
-        exportSession.outputURL = outputURL
-        exportSession.outputFileType = AVFileType.mp4
-        
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            exportSession.exportAsynchronously {
-                continuation.resume()
+        // Delegate cho luồng audio
+        let aDelegate = SingleDownloadDelegate(
+            onProgress: { progress, written, expected in
+                aProgress = progress
+                aBytesWritten = written
+                aBytesExpected = expected
+                updateCombinedProgress()
+            },
+            onComplete: { tempURL, error in
+                if let error = error { downloadError = error }
+                aTempDownloaded = tempURL
+                completedCount += 1
+                checkFinished()
             }
-        }
+        )
         
-        if exportSession.status != AVAssetExportSession.Status.completed {
-            throw exportSession.error ?? NSError(domain: "AetherMux", code: -3, userInfo: [NSLocalizedDescriptionKey: "Lỗi xuất file ghép"])
-        }
+        let vSession = URLSession(configuration: .default, delegate: vDelegate, delegateQueue: nil)
+        let aSession = URLSession(configuration: .default, delegate: aDelegate, delegateQueue: nil)
+        
+        activeSessions[videoId + "_v"] = vSession
+        activeSessions[videoId + "_a"] = aSession
+        downloadDelegates[videoId + "_v"] = vDelegate
+        downloadDelegates[videoId + "_a"] = aDelegate
+        
+        var vReq = URLRequest(url: videoURL)
+        vReq.setValue("com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
+        var aReq = URLRequest(url: audioURL)
+        aReq.setValue("com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
+        
+        vSession.downloadTask(with: vReq).resume()
+        aSession.downloadTask(with: aReq).resume()
     }
     
-    private func registerCompletedVideo(
+    private func finishDownload(
         videoId: String,
         title: String,
         author: String,
@@ -337,6 +384,82 @@ final class OfflineManager: NSObject, ObservableObject {
         )
         downloadedVideos.insert(video, at: 0)
         saveVideos()
+        
+        activeDownloadProgress[videoId] = 1.0
+        activeDownloadStatus[videoId] = "Hoàn tất!"
+        latestCompletedVideoTitle = title
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            await MainActor.run {
+                self.cleanupTask(videoId: videoId)
+            }
+        }
+    }
+    
+    private func failDownload(videoId: String, message: String) {
+        activeDownloadStatus[videoId] = message
+        Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run {
+                self.cleanupTask(videoId: videoId)
+            }
+        }
+    }
+    
+    // Ghép luồng hình và luồng tiếng native tốc độ cao (0.5s - 1s, không tốn pin)
+    private func muxVideoAndAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
+        let composition = AVMutableComposition()
+        let videoAsset = AVURLAsset(url: videoURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let audioAsset = AVURLAsset(url: audioURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        
+        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
+        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
+        
+        guard let videoTrack = videoTracks.first else {
+            throw NSError(domain: "AetherMux", code: -1, userInfo: [NSLocalizedDescriptionKey: "Thiếu track video"])
+        }
+        
+        let vDuration = try await videoAsset.load(.duration)
+        let videoRange = CMTimeRange(start: .zero, duration: vDuration)
+        
+        if let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            try compVideoTrack.insertTimeRange(videoRange, of: videoTrack, at: .zero)
+        }
+        
+        if let audioTrack = audioTracks.first {
+            let aDuration = try await audioAsset.load(.duration)
+            let minDuration = CMTimeMinimum(vDuration, aDuration)
+            let audioRange = CMTimeRange(start: .zero, duration: minDuration)
+            
+            if let compAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? compAudioTrack.insertTimeRange(audioRange, of: audioTrack, at: .zero)
+            }
+        }
+        
+        try? FileManager.default.removeItem(at: outputURL)
+        
+        var exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
+        if exportSession == nil || !exportSession!.supportedFileTypes.contains(.mp4) {
+            exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
+        }
+        
+        guard let session = exportSession else {
+            try FileManager.default.copyItem(at: videoURL, to: outputURL)
+            return
+        }
+        
+        session.outputURL = outputURL
+        session.outputFileType = .mp4
+        session.shouldOptimizeForNetworkUse = true
+        
+        await session.export()
+        
+        if session.status != .completed {
+            NSLog("Aether: Passthrough export failed (\(session.error?.localizedDescription ?? "")), copying video track directly")
+            try? FileManager.default.removeItem(at: outputURL)
+            try FileManager.default.copyItem(at: videoURL, to: outputURL)
+        }
     }
     
     private func cleanupTask(videoId: String) {
@@ -352,5 +475,40 @@ final class OfflineManager: NSObject, ObservableObject {
         }
         downloadedVideos.removeAll { $0.id == video.id }
         saveVideos()
+    }
+    
+    private func formatBytes(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "0 MB" }
+        let mb = Double(bytes) / (1024 * 1024)
+        if mb >= 1000 {
+            return String(format: "%.1f GB", mb / 1024)
+        }
+        return String(format: "%.1f MB", mb)
+    }
+}
+
+// MARK: – URLSessionDownloadDelegate cho phép lắng nghe % tiến trình từng chunk
+private final class SingleDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let onProgress: (Double, Int64, Int64) -> Void
+    let onComplete: (URL?, Error?) -> Void
+    
+    init(onProgress: @escaping (Double, Int64, Int64) -> Void, onComplete: @escaping (URL?, Error?) -> Void) {
+        self.onProgress = onProgress
+        self.onComplete = onComplete
+    }
+    
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        let progress = totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) : 0
+        onProgress(progress, totalBytesWritten, totalBytesExpectedToWrite)
+    }
+    
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        onComplete(location, nil)
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            onComplete(nil, error)
+        }
     }
 }

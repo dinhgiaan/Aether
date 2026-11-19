@@ -170,14 +170,35 @@ final class WebController: NSObject, ObservableObject {
     }
     
     func handleSwipeDown() {
-        // Vuốt video xuống: thu nhỏ video thành Picture-in-Picture nổi tiếp tục phát không bị tắt và không bị mất video
+        // Vuốt video xuống: thu nhỏ video thành Picture-in-Picture nổi tiếp tục phát không bị tắt và quay về trang trước
         let js = """
         (() => {
           const v = document.querySelector('.html5-video-player video, video');
           if (v && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
             if (v.paused) { v.play().catch(() => {}); }
             v.webkitSetPresentationMode('picture-in-picture');
+            
+            // Di chuyển <video> ra document.body để bảo vệ khỏi bị tiêu huỷ khi YouTube unmount trang xem video
+            if (v.parentNode !== document.body) {
+              v.style.position = 'fixed';
+              v.style.top = '-9999px';
+              v.style.left = '-9999px';
+              v.style.width = '1px';
+              v.style.height = '1px';
+              v.style.opacity = '0';
+              v.style.pointerEvents = 'none';
+              document.body.appendChild(v);
+            }
           }
+          
+          // Chờ 250ms để WebKit gắn kết PiP an toàn rồi lùi về trang trước mượt mà
+          setTimeout(() => {
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              window.location.href = '/';
+            }
+          }, 250);
         })();
         """
         run(js)
@@ -228,7 +249,7 @@ final class WebController: NSObject, ObservableObject {
         }
     }
 
-    private func extractCurrentVideoId() -> String? {
+    func extractCurrentVideoId() -> String? {
         guard let url = webView.url else { return nil }
         if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             if let v = comps.queryItems?.first(where: { $0.name == "v" })?.value, !v.isEmpty {

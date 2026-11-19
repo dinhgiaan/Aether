@@ -21,31 +21,56 @@ struct ContentView: View {
 
             // Nút Tải video nổi ở góc dưới bên phải khi đang xem video (Icon only, chuẩn Liquid-Glass)
             if web.isWatching {
+                let currentVidId = web.extractCurrentVideoId() ?? ""
+                let isDownloadingCurrent = offlineManager.activeDownloadProgress[currentVidId] != nil
+                let currentProgress = offlineManager.activeDownloadProgress[currentVidId] ?? 0.0
+
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
                         Button {
                             Haptic.feedback(.medium)
-                            web.requestDownload()
+                            if isDownloadingCurrent {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    web.showOfflineLibrary = true
+                                }
+                            } else {
+                                web.requestDownload()
+                            }
                         } label: {
-                            Image(systemName: "arrow.down.to.line")
-                                .font(.system(size: 19, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 48, height: 48)
-                                .background(.ultraThinMaterial, in: Circle())
-                                .overlay(
+                            ZStack {
+                                if isDownloadingCurrent {
                                     Circle()
-                                        .strokeBorder(
-                                            LinearGradient(
-                                                colors: [.white.opacity(0.35), .white.opacity(0.10)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            ),
-                                            lineWidth: 0.8
-                                        )
-                                )
-                                .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
+                                        .trim(from: 0, to: CGFloat(currentProgress))
+                                        .stroke(Color.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                        .rotationEffect(.degrees(-90))
+                                        .frame(width: 38, height: 38)
+                                        .animation(.linear(duration: 0.2), value: currentProgress)
+                                    
+                                    Text("\(Int(currentProgress * 100))%")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.white)
+                                } else {
+                                    Image(systemName: "arrow.down.to.line")
+                                        .font(.system(size: 19, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(
+                                        LinearGradient(
+                                            colors: [.white.opacity(0.35), .white.opacity(0.10)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 0.8
+                                    )
+                            )
+                            .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
                         }
                         .buttonStyle(ScaleButtonStyle())
                         .padding(.trailing, 20)
@@ -54,6 +79,65 @@ struct ContentView: View {
                 }
                 .transition(.scale.combined(with: .opacity))
                 .zIndex(10)
+            }
+
+            // Thanh thông báo tiến trình tải video thời gian thực nổi ở góc trên
+            if let activeId = offlineManager.activeDownloadProgress.keys.first,
+               let progress = offlineManager.activeDownloadProgress[activeId] {
+                VStack {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white.opacity(0.18), lineWidth: 3)
+                            Circle()
+                                .trim(from: 0, to: CGFloat(progress))
+                                .stroke(Color.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                                .animation(.linear(duration: 0.2), value: progress)
+                            Text("\(Int(progress * 100))%")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        .frame(width: 32, height: 32)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(offlineManager.activeDownloadTitles[activeId] ?? "Đang tải video...")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            Text(offlineManager.activeDownloadStatus[activeId] ?? "\(Int(progress * 100))%")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                        
+                        Spacer()
+                        
+                        Button {
+                            Haptic.feedback(.light)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                web.showOfflineLibrary = true
+                            }
+                        } label: {
+                            Text("Xem")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.18), in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.white.opacity(0.22), lineWidth: 0.6))
+                    .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 48)
+
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(15)
             }
 
             // Màn hình Thư viện Ngoại Tuyến toàn trang (Dedicated Full Page)

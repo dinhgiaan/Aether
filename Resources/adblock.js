@@ -123,7 +123,18 @@
   const syncAdSkipper = () => {
     const isWatch = location.pathname.startsWith('/watch');
     document.body?.classList.toggle('ae-watching', isWatch);
-    if (isWatch) startAdSkipper();
+    if (isWatch) {
+      // Dọn dẹp video detached cũ nếu có khi mở trang xem mới
+      const detached = document.body?.querySelectorAll(':scope > video');
+      if (detached && detached.length > 0) {
+        detached.forEach(oldV => {
+          if (oldV !== document.querySelector('.html5-video-player video')) {
+            try { oldV.pause(); oldV.remove(); } catch (_) {}
+          }
+        });
+      }
+      startAdSkipper();
+    }
     else if (adInterval) { clearInterval(adInterval); adInterval = null; }
     
     // Báo trạng thái xem cho Swift Native
