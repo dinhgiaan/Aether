@@ -170,24 +170,14 @@ final class WebController: NSObject, ObservableObject {
     }
     
     func handleSwipeDown() {
-        // Vuốt video xuống: thu nhỏ video thành PiP nổi tiếp tục phát không bị tắt, sau đó lùi về trang trước mượt mà
+        // Vuốt video xuống: thu nhỏ video thành Picture-in-Picture nổi tiếp tục phát không bị tắt và không bị mất video
         let js = """
         (() => {
           const v = document.querySelector('.html5-video-player video, video');
-          if (v) {
-            window.__aeInPiP = true;
+          if (v && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
             if (v.paused) { v.play().catch(() => {}); }
-            if (v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
-              v.webkitSetPresentationMode('picture-in-picture');
-            }
+            v.webkitSetPresentationMode('picture-in-picture');
           }
-          setTimeout(() => {
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              window.location.href = '/';
-            }
-          }, 80);
         })();
         """
         run(js)
@@ -287,7 +277,18 @@ final class WebController: NSObject, ObservableObject {
 
     // MARK: - Giữ phát nền & Lock screen
     @objc private func willResign() { run("window.__aeMedia && window.__aeMedia.remember()") }
-    @objc private func didBackground() { run("window.__aeMedia && window.__aeMedia.enterBackground()") }
+    @objc private func didBackground() {
+        // Tự động kích hoạt PiP khi ra ngoài app nếu đang xem video
+        run("""
+        (() => {
+          const v = document.querySelector('.html5-video-player video, video');
+          if (v && !v.paused && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
+            v.webkitSetPresentationMode('picture-in-picture');
+          }
+          window.__aeMedia && window.__aeMedia.enterBackground();
+        })();
+        """)
+    }
     @objc private func willForeground() { run("window.__aeMedia && window.__aeMedia.enterForeground()") }
 
     func run(_ js: String) {

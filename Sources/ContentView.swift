@@ -19,45 +19,41 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 
-            // Thanh công cụ Tải & PiP góc trên bên phải khi đang xem video (Đã bỏ hoàn toàn nút tròn vuốt xuống)
+            // Nút Tải video nổi ở góc dưới bên phải khi đang xem video (Icon only, chuẩn Liquid-Glass)
             if web.isWatching {
                 VStack {
+                    Spacer()
                     HStack {
                         Spacer()
-
-                        HStack(spacing: 8) {
-                            Button {
-                                Haptic.feedback(.medium)
-                                web.requestDownload()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.down.to.line")
-                                        .font(.system(size: 12, weight: .bold))
-                                    Text("Tải")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
+                        Button {
+                            Haptic.feedback(.medium)
+                            web.requestDownload()
+                        } label: {
+                            Image(systemName: "arrow.down.to.line")
+                                .font(.system(size: 19, weight: .bold))
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .overlay(Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 0.5))
-                                .shadow(color: .black.opacity(0.3), radius: 6)
-                            }
-                            .buttonStyle(ScaleButtonStyle())
-
-                            PiPButton(action: {
-                                Haptic.feedback(.light)
-                                web.togglePiP()
-                            })
+                                .frame(width: 48, height: 48)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(
+                                            LinearGradient(
+                                                colors: [.white.opacity(0.35), .white.opacity(0.10)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 0.8
+                                        )
+                                )
+                                .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
                         }
-                        .padding(.trailing, 14)
+                        .buttonStyle(ScaleButtonStyle())
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 24)
                     }
-                    .padding(.top, 50)
-
-                    Spacer()
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .zIndex(6)
+                .transition(.scale.combined(with: .opacity))
+                .zIndex(10)
             }
 
             // Màn hình Thư viện Ngoại Tuyến toàn trang (Dedicated Full Page)
@@ -207,48 +203,6 @@ private struct DownloadQualitySheet: View {
     }
 }
 
-// MARK: – Liquid-Glass PiP button
-private struct PiPButton: View {
-    let action: () -> Void
-    @State private var pressed = false
-
-    var body: some View {
-        Button {
-            action()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "pip.enter")
-                    .font(.system(size: 13, weight: .semibold))
-                    .symbolEffect(.bounce, value: pressed)
-                Text("PiP")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [.white.opacity(0.28), .white.opacity(0.08)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.6
-                    )
-            )
-            .scaleEffect(pressed ? 0.90 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pressed)
-        }
-        .buttonStyle(.plain)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded   { _ in pressed = false }
-        )
-    }
-}
 
 // MARK: – Cinematic Netflix-Style Splash Intro
 private struct NetflixSplashView: View {

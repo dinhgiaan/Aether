@@ -163,8 +163,13 @@
     'ytm-pivot-bar-item-renderer:has([tab-identifier="FEshorts"])',
     'ytm-pivot-bar-item-renderer:has(a[href*="/shorts"])',
     'ytm-reel-shelf-renderer',
+    'ytm-rich-shelf-renderer',
     'ytm-rich-shelf-renderer:has(ytm-reel-item-renderer)',
     'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer)',
+    'ytm-rich-section-renderer:has(ytm-reel-item-renderer)',
+    'ytm-rich-section-renderer:has(a[href*="/shorts"])',
+    'ytm-rich-section-renderer:has([aria-label*="Shorts"])',
+    'ytm-rich-section-renderer:has([title*="Shorts"])',
     'ytm-reel-item-renderer',
     'ytm-rich-item-renderer:has(ytm-reel-item-renderer)',
     'ytm-rich-item-renderer:has(a[href*="/shorts"])',
@@ -172,6 +177,8 @@
     'ytm-compact-video-renderer:has(a[href*="/shorts"])',
     'ytm-item-section-renderer:has(ytm-reel-shelf-renderer)',
     'ytm-item-section-renderer:has(ytm-reel-item-renderer)',
+    'ytm-item-section-renderer:has(a[href*="/shorts"])',
+    'ytm-item-section-renderer:has([aria-label*="Shorts"])',
     'ytm-shelf-renderer:has(ytm-reel-item-renderer)',
     'ytm-reel-player-overlay-renderer',
     '[aria-label*="Shorts"]',
@@ -285,15 +292,6 @@
   for (const type of ['visibilitychange', 'webkitvisibilitychange']) {
     document.addEventListener(type, (e) => e.stopImmediatePropagation(), true);
   }
-
-  // Chống YouTube script tự động pause video khi vào PiP hoặc đổi mode
-  const origPause = HTMLMediaElement.prototype.pause;
-  HTMLMediaElement.prototype.pause = function (...args) {
-    if (this.webkitPresentationMode === 'picture-in-picture' || window.__aeInPiP) {
-      return;
-    }
-    return origPause.apply(this, args);
-  };
 
   document.addEventListener('webkitpresentationmodechanged', (e) => {
     const v = e.target;
@@ -428,21 +426,27 @@
 
         const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
-        // Gọi trực tiếp InnerTube ANDROID_VR để lấy stream sạch 1080p, 1440p, 4K, 720p không bị mã hóa signature
+        // Gọi trực tiếp InnerTube Client iOS 20.10.4 để lấy stream sạch 1080p, 1440p, 4K, 720p không bị bot check
         let targetData = null;
         try {
-          const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+          const res = await fetch('/youtubei/v1/player?prettyPrint=false', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-YouTube-Client-Name': '5',
+              'X-YouTube-Client-Version': '20.10.4'
+            },
             body: JSON.stringify({
               videoId: videoId,
               context: {
                 client: {
-                  clientName: 'ANDROID_VR',
-                  clientVersion: '1.61.48',
-                  deviceModel: 'Quest 3',
-                  osName: 'Android',
-                  osVersion: '12'
+                  clientName: 'IOS',
+                  clientVersion: '20.10.4',
+                  deviceMake: 'Apple',
+                  deviceModel: 'iPhone16,2',
+                  userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+                  osName: 'iPhone',
+                  osVersion: '17.5.1.21F90'
                 }
               }
             })
@@ -451,7 +455,7 @@
             targetData = await res.json();
           }
         } catch (e) {
-          console.warn('Aether ANDROID_VR fetch error:', e);
+          console.warn('Aether iOS client fetch error:', e);
         }
 
         // Cập nhật metadata chuẩn từ targetData nếu có
