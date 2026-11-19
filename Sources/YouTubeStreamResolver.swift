@@ -106,7 +106,23 @@ struct YouTubeStreamResolver {
             var options: [StreamOption] = []
             var seenHeights = Set<Int>()
             
-            // 2. Quét video H.264 (avc1) từ adaptive: nghiêm cấm 360p/480p, chỉ lấy >= 720p (1080p Full HD, 720p HD)
+            // 2. Quét progressive formats TRƯỚC (đã có audio sẵn trong 1 file, tải cực nhanh và AVPlayer phát 100% mượt mà)
+            for item in progressiveFormats {
+                guard let urlStr = item["url"] as? String else { continue }
+                let height = item["height"] as? Int ?? 0
+                guard height >= 720, !seenHeights.contains(height) else { continue }
+                seenHeights.insert(height)
+                
+                let label = item["qualityLabel"] as? String ?? "\(height)p HD"
+                options.append(StreamOption(
+                    quality: "\(label) (Trực tiếp)",
+                    url: urlStr,
+                    audioURL: nil,
+                    mimeType: item["mimeType"] as? String
+                ))
+            }
+            
+            // 3. Quét adaptive formats (1080p, 1440p, 4K)
             for item in adaptiveFormats {
                 guard let mimeType = item["mimeType"] as? String,
                       mimeType.hasPrefix("video/"),
@@ -133,22 +149,6 @@ struct YouTubeStreamResolver {
                     url: urlStr,
                     audioURL: bestAudioURL,
                     mimeType: mimeType
-                ))
-            }
-            
-            // 3. Quét progressive formats (đã có audio sẵn)
-            for item in progressiveFormats {
-                guard let urlStr = item["url"] as? String else { continue }
-                let height = item["height"] as? Int ?? 0
-                guard height >= 720, !seenHeights.contains(height) else { continue }
-                seenHeights.insert(height)
-                
-                let label = item["qualityLabel"] as? String ?? "\(height)p HD"
-                options.append(StreamOption(
-                    quality: label,
-                    url: urlStr,
-                    audioURL: nil,
-                    mimeType: item["mimeType"] as? String
                 ))
             }
             

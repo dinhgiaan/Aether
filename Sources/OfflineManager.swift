@@ -429,16 +429,12 @@ final class OfflineManager: NSObject, ObservableObject {
             }
         }
         
+        try? FileManager.default.createDirectory(at: Self.videosDirectory, withIntermediateDirectories: true, attributes: nil)
         try? FileManager.default.removeItem(at: outputURL)
         
-        var exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
-        if exportSession == nil || !exportSession!.supportedFileTypes.contains(.mp4) {
-            exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
-        }
-        
-        guard let session = exportSession else {
-            try FileManager.default.copyItem(at: videoURL, to: outputURL)
-            return
+        // Sử dụng AVAssetExportPresetHighestQuality để chuyển đổi DASH fMP4 thành file MP4 hoàn chỉnh có cả hình lẫn tiếng
+        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            throw NSError(domain: "AetherMux", code: -2, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo AVAssetExportSession"])
         }
         
         session.outputURL = outputURL
@@ -448,9 +444,7 @@ final class OfflineManager: NSObject, ObservableObject {
         await session.export()
         
         if session.status != .completed {
-            NSLog("Aether: Passthrough export failed (\(session.error?.localizedDescription ?? "")), copying video track directly")
-            try? FileManager.default.removeItem(at: outputURL)
-            try FileManager.default.copyItem(at: videoURL, to: outputURL)
+            throw session.error ?? NSError(domain: "AetherMux", code: -3, userInfo: [NSLocalizedDescriptionKey: "Lỗi xuất file ghép MP4"])
         }
     }
     

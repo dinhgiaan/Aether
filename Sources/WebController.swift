@@ -170,17 +170,13 @@ final class WebController: NSObject, ObservableObject {
     }
     
     func handleSwipeDown() {
-        // Vuốt video xuống: Đóng video và lùi về trang trước (trang chủ / trang xuất phát) mượt mà
+        // Vuốt video xuống: thu nhỏ video thành PiP nổi tiếp tục phát không bị tắt và không bị gián đoạn
         let js = """
         (() => {
           const v = document.querySelector('.html5-video-player video, video');
-          if (v && v.webkitPresentationMode === 'picture-in-picture') {
-            try { v.webkitSetPresentationMode('inline'); } catch (_) {}
-          }
-          if (window.history.length > 1) {
-            window.history.back();
-          } else {
-            window.location.href = '/';
+          if (v && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
+            if (v.paused) { v.play().catch(() => {}); }
+            v.webkitSetPresentationMode('picture-in-picture');
           }
         })();
         """
