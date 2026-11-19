@@ -66,15 +66,17 @@
       background: rgba(255, 255, 255, 0.14) !important;
     }
 
-    /* Ẩn triệt để Shorts Tab và Kệ Shorts trên Home Feed */
+    /* Ẩn triệt để Shorts Tab và Kệ Reels chuyên biệt */
     ytm-pivot-bar-item-renderer:has(a[href*="shorts"]),
     ytm-pivot-bar-item-renderer:has([aria-label*="Shorts"]),
     ytm-pivot-bar-item-renderer:has([aria-label*="shorts"]),
-    ytm-reel-shelf-renderer,
-    ytm-rich-section-renderer:has(a[href*="/shorts/"]),
-    ytm-rich-section-renderer:has(ytm-reel-item-renderer),
-    ytm-item-section-renderer:has(ytm-reel-item-renderer) {
+    ytm-reel-shelf-renderer {
       display: none !important;
+    }
+
+    /* Đảm bảo phần Recent / Lịch sử xem trong tab Hồ sơ luôn hiển thị đầy đủ */
+    ytm-rich-shelf-renderer:has(a[href*="/watch"]) {
+      display: block !important;
     }
 
     /* ── Content clearance so floating bar doesn't cover items ──────────── */
@@ -330,10 +332,11 @@
       }
     });
 
-    // Thêm thẻ "Video đã tải ngoại tuyến" vào Hồ Sơ
+    // Thêm thẻ "Video đã tải ngoại tuyến" vào Hồ Sơ bên dưới phần Lịch sử xem (Recent)
     if (location.pathname.startsWith('/feed/you') || location.pathname.startsWith('/feed/library')) {
       if (!document.getElementById('ae-profile-dl-card')) {
-        const container = document.querySelector('ytm-item-section-renderer, ytm-section-list-renderer');
+        const historyShelf = document.querySelector('ytm-rich-shelf-renderer, ytm-item-section-renderer:has(a[href*="/watch"])');
+        const container = document.querySelector('ytm-section-list-renderer') || document.querySelector('.page-container');
         if (container) {
           const card = document.createElement('div');
           card.id = 'ae-profile-dl-card';
@@ -371,7 +374,11 @@
               window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
             } catch (_) {}
           });
-          container.prepend(card);
+          if (historyShelf && historyShelf.nextSibling) {
+            historyShelf.parentNode.insertBefore(card, historyShelf.nextSibling);
+          } else {
+            container.prepend(card);
+          }
         }
       }
     }
@@ -436,10 +443,22 @@
       }
     });
 
-    // Xoá các kệ/giá sách Shorts trên Feed trang chủ
-    const shelves = document.querySelectorAll('ytm-rich-section-renderer, ytm-reel-shelf-renderer, ytm-item-section-renderer');
+    // TUYỆT ĐỐI KHÔNG xoá kệ khi ở trong Hồ sơ (để bảo vệ phần Recent / Lịch sử xem video)
+    if (location.pathname.startsWith('/feed/you') || location.pathname.startsWith('/feed/library') || location.pathname.startsWith('/feed/history')) {
+      return;
+    }
+
+    // Xoá kệ Shorts chuyên biệt trên trang chủ
+    const shelves = document.querySelectorAll('ytm-reel-shelf-renderer, ytm-rich-section-renderer');
     shelves.forEach((el) => {
-      if (el.querySelector('a[href*="/shorts/"], ytm-reel-item-renderer, [aria-label*="Shorts"]')) {
+      if (el.tagName.toLowerCase() === 'ytm-reel-shelf-renderer') {
+        el.style.display = 'none';
+        el.remove();
+        return;
+      }
+      const hasReel = el.querySelector('ytm-reel-item-renderer, [aria-label*="Shorts"], [aria-label*="shorts"]');
+      const hasWatchVideo = el.querySelector('a[href*="/watch?v="]');
+      if (hasReel && !hasWatchVideo) {
         el.style.display = 'none';
         el.remove();
       }
