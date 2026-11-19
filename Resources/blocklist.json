@@ -1,14 +1,130 @@
 [
-  { "trigger": { "url-filter": "doubleclick\\.net" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "googlesyndication\\.com" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "googleadservices\\.com" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "googletagservices\\.com" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "adservice\\.google\\." }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "google\\.com/pagead/" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/pagead/" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/ptracking" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/api/stats/ads" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/get_midroll_" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/youtubei/v1/player/ad_break" }, "action": { "type": "block" } },
-  { "trigger": { "url-filter": "youtube\\.com/pcs/activeview" }, "action": { "type": "block" } }
+  {
+    "trigger": {
+      "url-filter": "doubleclick\\.net"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "googlesyndication\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "googleadservices\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "googletagservices\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "googletagmanager\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "adservice\\.google\\."
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "google\\.com/pagead/"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/pagead/"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/ptracking"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/api/stats/ads"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/get_midroll_"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/youtubei/v1/player/ad_break"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/pcs/activeview"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "google-analytics\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/api/stats/qoe"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "play\\.google\\.com/log"
+    },
+    "action": {
+      "type": "block"
+    }
+  }
 ]

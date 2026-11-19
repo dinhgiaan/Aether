@@ -5,12 +5,24 @@
   if (!/(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname)) return;
   window.__aeAdblock = true;
 
-  // ---- 1. Xóa field quảng cáo khỏi dữ liệu player -------------------------
-  const AD_KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
-  const prune = (o) => {
-    if (o && typeof o === 'object') {
-      for (const k of AD_KEYS) if (k in o) { try { delete o[k]; } catch (_) {} }
-      if (o.playerResponse && typeof o.playerResponse === 'object') prune(o.playerResponse);
+  // ---- 1. Xóa field quảng cáo khỏi dữ liệu player (Heuristic + Regex động) ---
+  // Nhận diện tự động cả tên chính xác lẫn các biến thể đặt tên mới của YouTube
+  const AD_KEY_REGEX = /(^|_)(playerAds|adPlacements?|adSlots?|adBreaks?|adBreakHeartbeatParams|promoted(Video|Sparkles|Item)?|interstitialAds?)($|_)/i;
+  const SAFE_EXCLUDE = /^(adaptiveFormats|additionalMetadata)$/i;
+
+  const prune = (o, depth = 0) => {
+    if (!o || typeof o !== 'object' || depth > 8) return o;
+    if (Array.isArray(o)) {
+      for (let i = 0; i < o.length; i++) prune(o[i], depth + 1);
+      return o;
+    }
+    for (const k of Object.keys(o)) {
+      if (SAFE_EXCLUDE.test(k)) continue;
+      if (AD_KEY_REGEX.test(k)) {
+        try { delete o[k]; } catch (_) { }
+      } else if (o[k] && typeof o[k] === 'object') {
+        prune(o[k], depth + 1);
+      }
     }
     return o;
   };
@@ -31,35 +43,73 @@
       get() { return initialPlayerResponse; },
       set(v) { initialPlayerResponse = prune(v); },
     });
-  } catch (_) {}
+  } catch (_) { }
 
   // ---- 2. Nếu ad vẫn lọt: mute, tua cuối, bấm Skip ------------------------
+  // Interval chỉ chạy khi đang ở trang /watch, tự dừng khi không có player
   const SKIP = [
     '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern', '.ytp-skip-ad-button',
     '.ytp-ad-skip-button-container button', '.ytp-ad-overlay-close-button',
   ].join(',');
   let mutedByUs = false;
-  setInterval(() => {
+  let adInterval = null;
+
+  const tickAdSkipper = () => {
     const player = document.querySelector('.html5-video-player');
-    const video = player && player.querySelector('video');
-    if (player && player.classList.contains('ad-showing')) {
+    if (!player) {
+      // Không có player (đang ở feed/home) → dừng interval để tiết kiệm CPU
+      clearInterval(adInterval); adInterval = null; return;
+    }
+    const video = player.querySelector('video');
+    if (player.classList.contains('ad-showing')) {
       if (video) {
         if (!video.muted) { video.muted = true; mutedByUs = true; }
+        // Tăng tốc x16 + tua tới cuối: vượt qua cả quảng cáo unskippable bị YouTube ép xem
+        try { video.playbackRate = 16; } catch (_) { }
         if (isFinite(video.duration) && video.duration > 0 && video.currentTime < video.duration - 0.1) {
           video.currentTime = video.duration;
         }
       }
+      const skip = document.querySelector(SKIP);
+      if (skip) skip.click();
+
+      // Tự động chẩn đoán: phát hiện và quét lại nếu YouTube vừa lọt cấu trúc JSON mới
+      if (window.ytInitialPlayerResponse) {
+        prune(window.ytInitialPlayerResponse);
+      }
     } else if (mutedByUs) {
-      if (video) video.muted = false;
+      if (video) {
+        video.muted = false;
+        try { video.playbackRate = 1; } catch (_) { }
+      }
       mutedByUs = false;
     }
-    const skip = document.querySelector(SKIP);
-    if (skip) skip.click();
-  }, 300);
+  };
 
-  // ---- 3. Ẩn ô quảng cáo trong feed ---------------------------------------
+  const startAdSkipper = () => {
+    if (!adInterval) adInterval = setInterval(tickAdSkipper, 300);
+  };
+
+  // Kích hoạt khi URL là /watch, dừng khi rời trang video (YouTube SPA dùng popstate)
+  const syncAdSkipper = () => {
+    if (location.pathname.startsWith('/watch')) startAdSkipper();
+    else if (adInterval) { clearInterval(adInterval); adInterval = null; }
+  };
+  window.addEventListener('popstate', syncAdSkipper, true);
+  // Hook pushState MỘT LẦN tại đây (adblock load trước uienhance).
+  // Dispatch 'ae:navigate' để các script khác listen thay vì hook lại lần nữa.
+  const origPush = history.pushState.bind(history);
+  history.pushState = function (...args) {
+    origPush(...args);
+    syncAdSkipper();
+    window.dispatchEvent(new Event('ae:navigate'));
+  };
+  syncAdSkipper(); // kiểm tra ngay khi trang load
+
+  // ---- 3. Ẩn ô quảng cáo trong feed + các phần tử không mong muốn ----------
   // Mỗi selector một rule riêng để selector không hỗ trợ không làm hỏng cả bộ
   const HIDE = [
+    // Quảng cáo
     'ad-slot-renderer', 'ytm-ad-slot-renderer', 'ytd-ad-slot-renderer',
     'ytm-promoted-sparkles-web-renderer', 'ytm-promoted-video-renderer',
     'ytm-companion-ad-renderer', 'ytm-companion-slot', 'ytm-in-feed-ad-layout-renderer',
@@ -72,6 +122,12 @@
     'ytm-rich-item-renderer:has(ytm-ad-slot-renderer)',
     'ytm-item-section-renderer:has(ad-slot-renderer)',
     'ytm-reel-video-renderer:has(ad-slot-renderer)',
+    // Nút "Open App" / "Use App" mời mở app YouTube chính thống
+    '.yt-uix-redirect-button', '.open-app-button', 'ytm-open-app-promo-renderer',
+    'ytm-app-promo-renderer', '.ytp-webview-open-app-button',
+    // Tab Shorts trên bottom nav
+    'ytm-pivot-bar-item-renderer:has([tab-identifier="FEshorts"])',
+    'ytm-pivot-bar-item-renderer:has(a[href="/shorts"])',
   ];
   const css = HIDE.map((s) => s + '{display:none!important}').join('\n');
   const addStyle = () => {
@@ -84,7 +140,7 @@
     root.appendChild(style);
   };
   addStyle();
-  document.addEventListener('DOMContentLoaded', addStyle);
+  document.addEventListener('DOMContentLoaded', addStyle, { once: true });
 
   // ---- 4. Phát nền + PiP (chỉ frame chính) --------------------------------
   if (window !== window.top) return;
@@ -95,7 +151,7 @@
       ['hidden', false], ['webkitHidden', false],
       ['visibilityState', 'visible'], ['webkitVisibilityState', 'visible'],
     ]) Object.defineProperty(document, prop, { configurable: true, get: () => val });
-  } catch (_) {}
+  } catch (_) { }
   for (const type of ['visibilitychange', 'webkitvisibilitychange']) {
     document.addEventListener(type, (e) => e.stopImmediatePropagation(), true);
   }
@@ -129,7 +185,7 @@
       const v = currentVideo();
       if (this.wasPlaying && v && v.paused && !v.ended) {
         const p = v.play();
-        if (p && p.catch) p.catch(() => {});
+        if (p && p.catch) p.catch(() => { });
       }
     },
     togglePiP() {

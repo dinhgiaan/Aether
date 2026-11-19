@@ -10,13 +10,21 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache Homebrew packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            /usr/local/Homebrew
+          key: brew-xcodegen-${{ runner.os }}-${{ runner.arch }}
+
       - name: Cài XcodeGen và sinh project
         run: |
-          brew install xcodegen
+          brew install xcodegen 2>/dev/null || brew upgrade xcodegen 2>/dev/null || true
           xcodegen generate
 
       - name: Build (không ký)
