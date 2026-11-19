@@ -154,8 +154,68 @@ final class WebController: NSObject, ObservableObject {
         run("if (window.__aeMedia && window.__aeMedia.togglePiP) { window.__aeMedia.togglePiP(); } if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }")
     }
     
-    func requestDownload() {
-        run("window.__aeMedia && window.__aeMedia.extractDownloadStreams()")
+    func requestDownload(explicitId: String? = nil) {
+        if let vid = explicitId, !vid.isEmpty {
+            Task { @MainActor in
+                await self.resolveAndShowDownload(videoId: vid)
+            }
+            return
+        }
+        
+        // Trích xuất video ID chính xác trực tiếp từ WKWebView
+        webView.evaluateJavaScript("window.location.search + '|' + window.location.pathname") { [weak self] res, _ in
+            Task { @MainActor in
+                guard let self = self else { return }
+                var foundId: String? = nil
+                if let str = res as? String {
+                    let parts = str.split(separator: "|")
+                    let search = parts.first ?? ""
+                    if let vMatch = search.range(of: "v=") {
+                        let sub = search[vMatch.upperBound...]
+                        let raw = String(sub.prefix(while: { $0 != "&" && $0 != "#" }))
+                        if !raw.isEmpty { foundId = raw }
+                    }
+                    if foundId == nil, parts.count > 1 {
+                        let path = String(parts[1])
+                        if path.contains("/shorts/") {
+                            foundId = path.components(separatedBy: "/").last
+                        }
+                    }
+                }
+                if foundId == nil {
+                    foundId = self.extractCurrentVideoId()
+                }
+                guard let vid = foundId, !vid.isEmpty else {
+                    // Fallback JS
+                    self.run("window.__aeMedia && window.__aeMedia.extractDownloadStreams()")
+                    return
+                }
+                await self.resolveAndShowDownload(videoId: vid)
+            }
+        }
+    }
+
+    private func extractCurrentVideoId() -> String? {
+        guard let url = webView.url else { return nil }
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            if let v = comps.queryItems?.first(where: { $0.name == "v" })?.value, !v.isEmpty {
+                return v
+            }
+        }
+        if url.path.contains("/shorts/") {
+            return url.lastPathComponent
+        }
+        return nil
+    }
+
+    private func resolveAndShowDownload(videoId: String) async {
+        if let info = await YouTubeStreamResolver.resolve(videoId: videoId) {
+            self.activeDownloadInfo = info
+            self.showDownloadSheet = true
+        } else {
+            // Fallback JS nếu native gặp sự cố
+            self.run("window.__aeMedia && window.__aeMedia.extractDownloadStreams()")
+        }
     }
 
     func setOrientationLandscape() {
@@ -337,7 +397,8 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                         if action == "openDownloads" {
                             target.showOfflineLibrary = true
                         } else if action == "requestDownload" {
-                            target.requestDownload()
+                            let vid = dict["videoId"] as? String
+                            target.requestDownload(explicitId: vid)
                         } else if action == "enterFullscreen" {
                             target.setOrientationLandscape()
                         } else if action == "exitFullscreen" {

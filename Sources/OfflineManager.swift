@@ -142,17 +142,28 @@ final class OfflineManager: NSObject, ObservableObject {
         videoFileName: String,
         thumbFileName: String?
     ) {
+        var req = URLRequest(url: streamURL)
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        
         let session = URLSession(configuration: .default)
-        let task = session.downloadTask(with: streamURL) { [weak self] tempURL, _, error in
+        let task = session.downloadTask(with: req) { [weak self] tempURL, response, error in
             Task { @MainActor in
                 guard let self = self else { return }
-                self.cleanupTask(videoId: videoId)
                 
-                guard let tempURL = tempURL, error == nil else {
-                    NSLog("Aether: Lỗi tải file: %@", error?.localizedDescription ?? "unknown")
+                if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                    self.activeDownloadStatus[videoId] = "Lỗi kết nối máy chủ (HTTP \(http.statusCode))"
+                    self.delayCleanup(videoId: videoId)
                     return
                 }
                 
+                guard let tempURL = tempURL, error == nil else {
+                    NSLog("Aether: Lỗi tải file: %@", error?.localizedDescription ?? "unknown")
+                    self.activeDownloadStatus[videoId] = "Lỗi tải: \(error?.localizedDescription ?? "không xác định")"
+                    self.delayCleanup(videoId: videoId)
+                    return
+                }
+                
+                self.cleanupTask(videoId: videoId)
                 try? FileManager.default.removeItem(at: destURL)
                 do {
                     try FileManager.default.moveItem(at: tempURL, to: destURL)
@@ -192,13 +203,24 @@ final class OfflineManager: NSObject, ObservableObject {
         Task.detached(priority: .userInitiated) {
             do {
                 let session = URLSession.shared
+                var vReq = URLRequest(url: videoStreamURL)
+                vReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+                var aReq = URLRequest(url: audioStreamURL)
+                aReq.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
                 
                 // Tải song song 2 luồng
-                async let videoDownload = session.download(from: videoStreamURL)
-                async let audioDownload = session.download(from: audioStreamURL)
+                async let videoDownload = session.download(for: vReq)
+                async let audioDownload = session.download(for: aReq)
                 
-                let (vTemp, _) = try await videoDownload
-                let (aTemp, _) = try await audioDownload
+                let (vTemp, vResp) = try await videoDownload
+                let (aTemp, aResp) = try await audioDownload
+                
+                if let http = vResp as? HTTPURLResponse, http.statusCode >= 400 {
+                    throw NSError(domain: "AetherDownload", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+                }
+                if let http = aResp as? HTTPURLResponse, http.statusCode >= 400 {
+                    throw NSError(domain: "AetherDownload", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
+                }
                 
                 try? FileManager.default.removeItem(at: tempVideoURL)
                 try? FileManager.default.removeItem(at: tempAudioURL)
@@ -235,8 +257,18 @@ final class OfflineManager: NSObject, ObservableObject {
                 try? FileManager.default.removeItem(at: tempVideoURL)
                 try? FileManager.default.removeItem(at: tempAudioURL)
                 await MainActor.run {
-                    self.cleanupTask(videoId: videoId)
+                    self.activeDownloadStatus[videoId] = "Lỗi: \(error.localizedDescription)"
+                    self.delayCleanup(videoId: videoId)
                 }
+            }
+        }
+    }
+    
+    private func delayCleanup(videoId: String) {
+        Task {
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            await MainActor.run {
+                self.cleanupTask(videoId: videoId)
             }
         }
     }

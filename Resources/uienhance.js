@@ -446,7 +446,15 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      window.__aeMedia?.extractDownloadStreams();
+      const vid = new URLSearchParams(location.search).get('v');
+      try {
+        window.webkit?.messageHandlers?.aetherNav?.postMessage({
+          action: 'requestDownload',
+          videoId: vid || ''
+        });
+      } catch (_) {
+        window.__aeMedia?.extractDownloadStreams();
+      }
     });
     actionBar.insertBefore(btn, actionBar.firstChild);
   };
