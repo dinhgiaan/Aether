@@ -73,54 +73,121 @@
 
     /* ── Header hiện đại & Logo có lề chuẩn ──────────────────────────────── */
     .mobile-topbar-header, ytm-mobile-topbar-renderer {
-      background: rgba(12, 12, 15, 0.85) !important;
-      backdrop-filter: blur(24px) !important;
-      -webkit-backdrop-filter: blur(24px) !important;
+      background: rgba(12, 12, 15, 0.88) !important;
+      backdrop-filter: blur(28px) !important;
+      -webkit-backdrop-filter: blur(28px) !important;
       border-bottom: 0.5px solid rgba(255, 255, 255, 0.08) !important;
-      padding-left: 12px !important;
+      padding-left: 16px !important;
     }
 
     .header-bar-logo, ytm-home-logo, .topbar-header-logo-icon, a.mobile-topbar-header-endpoint, .ytm-mobile-topbar-renderer-logo {
-      margin-left: 8px !important;
+      margin-left: 14px !important;
       padding-left: 2px !important;
     }
 
     /* ── Custom UI/UX Tìm kiếm Liquid-Glass cao cấp ──────────────────────── */
-    ytm-search-box, .search-box-wrapper, form.search-form {
+    ytm-search-page, .search-box-wrapper {
+      background: #000000 !important;
+    }
+
+    ytm-search-box, form.search-form {
       border-radius: 999px !important;
-      background: rgba(255, 255, 255, 0.08) !important;
-      backdrop-filter: blur(20px) !important;
-      -webkit-backdrop-filter: blur(20px) !important;
-      border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+      background: rgba(255, 255, 255, 0.09) !important;
+      backdrop-filter: blur(24px) !important;
+      -webkit-backdrop-filter: blur(24px) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.18) !important;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4) !important;
       transition: all 0.2s ease !important;
+      padding: 2px 10px !important;
+      margin: 4px 8px !important;
     }
 
-    ytm-search-box:focus-within, .search-box-wrapper:focus-within {
-      background: rgba(255, 255, 255, 0.14) !important;
-      border-color: rgba(255, 45, 85, 0.45) !important;
-      box-shadow: 0 4px 20px rgba(255, 45, 85, 0.18) !important;
+    ytm-search-box:focus-within, form.search-form:focus-within {
+      background: rgba(255, 255, 255, 0.15) !important;
+      border-color: rgba(255, 45, 85, 0.5) !important;
+      box-shadow: 0 4px 22px rgba(255, 45, 85, 0.2) !important;
     }
 
-    .search-box-input {
+    .search-box-input, input[name="search_query"] {
       font-size: 15px !important;
+      font-weight: 500 !important;
       color: #ffffff !important;
-      padding: 8px 14px !important;
+      padding: 8px 12px !important;
+      background: transparent !important;
     }
 
-    /* Gợi ý tìm kiếm kính mờ */
-    .compact-link, ytm-search-suggestion, ytm-history-suggestion-renderer {
-      border-radius: 14px !important;
-      margin: 4px 10px !important;
-      padding: 11px 16px !important;
-      background: rgba(255, 255, 255, 0.04) !important;
-      border: 0.5px solid rgba(255, 255, 255, 0.06) !important;
+    /* Container danh sách lịch sử & gợi ý tìm kiếm */
+    ytm-search-suggestions-section-renderer,
+    .search-suggestions-container,
+    .search-history-container {
+      background: #000000 !important;
+      padding: 6px 12px !important;
+    }
+
+    /* Gợi ý tìm kiếm & Lịch sử kính mờ Apple Card */
+    .compact-link,
+    ytm-search-suggestion,
+    ytm-history-suggestion-renderer,
+    .search-suggestion-item {
+      border-radius: 12px !important;
+      margin: 4px 0 !important;
+      padding: 10px 14px !important;
+      background: rgba(255, 255, 255, 0.05) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.08) !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
       transition: all 0.15s ease !important;
     }
 
-    .compact-link:active, ytm-search-suggestion:active, ytm-history-suggestion-renderer:active {
-      background: rgba(255, 255, 255, 0.14) !important;
-      transform: scale(0.99) !important;
+    .compact-link:active,
+    ytm-search-suggestion:active,
+    ytm-history-suggestion-renderer:active {
+      background: rgba(255, 255, 255, 0.12) !important;
+      transform: scale(0.985) !important;
+    }
+
+    /* Xóa màu xanh link cũ, hiển thị text trắng sắc nét */
+    ytm-search-suggestion *,
+    ytm-history-suggestion-renderer *,
+    .compact-link *,
+    .search-suggestion-text,
+    .search-suggestion-text span {
+      color: #ffffff !important;
+      font-size: 14.5px !important;
+      font-weight: 500 !important;
+      text-decoration: none !important;
+    }
+
+    /* Đổi nút text 'Remove' màu xanh thô kệch thành nút ✕ icon tròn hiện đại phong cách iOS */
+    ytm-history-suggestion-renderer button,
+    .search-suggestion-remove-button,
+    button.search-suggestion-remove {
+      font-size: 0 !important;
+      width: 26px !important;
+      height: 26px !important;
+      min-width: 26px !important;
+      border-radius: 50% !important;
+      background: rgba(255, 255, 255, 0.10) !important;
+      border: 0.5px solid rgba(255, 255, 255, 0.15) !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      position: relative !important;
+      cursor: pointer !important;
+      margin-left: 8px !important;
+      padding: 0 !important;
+      flex-shrink: 0 !important;
+    }
+
+    ytm-history-suggestion-renderer button::after,
+    .search-suggestion-remove-button::after,
+    button.search-suggestion-remove::after {
+      content: '✕';
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.65);
+      line-height: 1;
     }
 
     /* Chuyển trang mượt mà */
@@ -267,6 +334,46 @@
     }
   };
 
+  // ── 4b. Nhúng nút Tải trực tiếp vào Action Bar của YouTube dưới video ─────
+  const injectDownloadButtonInActionBar = () => {
+    if (!location.pathname.startsWith('/watch')) return;
+    const actionBar = document.querySelector('ytm-slim-video-action-bar-renderer .slim-video-action-bar-actions');
+    if (!actionBar || document.getElementById('ae-action-download-btn')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'ae-action-download-btn';
+    btn.className = 'slim-video-action-bar-action-item';
+    btn.style.cssText = `
+      background: rgba(255, 255, 255, 0.12);
+      border: 0.5px solid rgba(255, 255, 255, 0.20);
+      border-radius: 999px;
+      padding: 7px 14px;
+      margin-right: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+    `;
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:none;stroke:#ffffff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <span>Tải</span>
+    `;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.__aeMedia?.extractDownloadStreams();
+    });
+    actionBar.insertBefore(btn, actionBar.firstChild);
+  };
+
   // ── 5. Vuốt video xuống để thu nhỏ PiP / quay về trang trước không bị ngắt ─
   let startY = 0;
   let startX = 0;
@@ -339,6 +446,7 @@
       replaceLogoWithAether();
       cleanProfileMenu();
       injectDownloadsTab();
+      injectDownloadButtonInActionBar();
     };
 
     window.addEventListener('popstate', refreshUI);
@@ -358,6 +466,7 @@
         replaceLogoWithAether();
         cleanProfileMenu();
         injectDownloadsTab();
+        injectDownloadButtonInActionBar();
         moScheduled = false;
       });
     });

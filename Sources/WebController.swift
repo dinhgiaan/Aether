@@ -158,6 +158,24 @@ final class WebController: NSObject, ObservableObject {
         run("window.__aeMedia && window.__aeMedia.extractDownloadStreams()")
     }
 
+    func setOrientationLandscape() {
+        if #available(iOS 16.0, *) {
+            let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
+        } else {
+            UIDevice.current.setValue(UIInterfaceOrientation.landscapeRight.rawValue, forKey: "orientation")
+        }
+    }
+
+    func setOrientationPortrait() {
+        if #available(iOS 16.0, *) {
+            let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        } else {
+            UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
+        }
+    }
+
     private func updateWatching() {
         let path = webView.url?.path ?? ""
         // Shorts bị ẩn trên UI — không cần PiP cho /shorts
@@ -315,8 +333,16 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     if let watching = dict["isWatching"] as? Bool {
                         target.isWatching = watching
                     }
-                    if let action = dict["action"] as? String, action == "openDownloads" {
-                        target.showOfflineLibrary = true
+                    if let action = dict["action"] as? String {
+                        if action == "openDownloads" {
+                            target.showOfflineLibrary = true
+                        } else if action == "requestDownload" {
+                            target.requestDownload()
+                        } else if action == "enterFullscreen" {
+                            target.setOrientationLandscape()
+                        } else if action == "exitFullscreen" {
+                            target.setOrientationPortrait()
+                        }
                     }
                 }
             default:

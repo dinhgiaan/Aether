@@ -27,11 +27,21 @@
   };
 
   // Hook cả 3 đường dữ liệu: JSON.parse, fetch().json(), ytInitialPlayerResponse nhúng trong HTML
+  const playerResponsesByVid = new Map();
+  const cachePlayerResponse = (data) => {
+    if (!data || typeof data !== 'object') return;
+    const vid = data.videoDetails?.videoId;
+    if (vid) {
+      playerResponsesByVid.set(vid, data);
+    }
+  };
+
   const nativeParse = JSON.parse;
   JSON.parse = function (...args) {
     try {
       const data = nativeParse.apply(this, args);
       if (data && (data.streamingData || data.videoDetails)) {
+        cachePlayerResponse(data);
         window.__lastPlayerResponse = data;
       }
       return prune(data);
@@ -46,6 +56,7 @@
       return nativeJson.apply(this, args).then((data) => {
         try {
           if (data && (data.streamingData || data.videoDetails)) {
+            cachePlayerResponse(data);
             window.__lastPlayerResponse = data;
           }
           return prune(data);
@@ -61,7 +72,10 @@
     Object.defineProperty(window, 'ytInitialPlayerResponse', {
       configurable: true,
       get() { return initialPlayerResponse; },
-      set(v) { initialPlayerResponse = prune(v); },
+      set(v) {
+        if (v) cachePlayerResponse(v);
+        initialPlayerResponse = prune(v);
+      },
     });
   } catch (_) { }
 
@@ -180,20 +194,47 @@
   ];
   const HIDE_CSS = HIDE.map((s) => s + '{display:none!important}').join('\n');
   const EXTRA_CSS = `
-    /* Xoá sạch khoảng trống thừa phía trên video khi xem */
+    /* Watch page: Xoá sạch khoảng trống thừa, ẩn placeholder bị trùng lặp */
+    body.ae-watching ytm-mobile-topbar-renderer,
+    body.ae-watching header.mobile-topbar-header,
+    body.ae-watching #header-bar {
+      display: none !important;
+      height: 0 !important;
+      min-height: 0 !important;
+    }
+
     body.ae-watching #app,
     body.ae-watching ytm-app,
     body.ae-watching .page-container,
-    body.ae-watching #player-container-id,
     body.ae-watching ytm-watch,
     body.ae-watching .watch-page {
       padding-top: 0 !important;
       margin-top: 0 !important;
     }
+
+    /* Ẩn triệt để placeholder giả lập chiều cao video để không bị khoảng xám trống khổng lồ */
+    body.ae-watching #player-placeholder,
+    body.ae-watching .player-placeholder,
+    body.ae-watching ytm-player-placeholder {
+      display: none !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    body.ae-watching #player-container-id,
     body.ae-watching .player-container {
       position: relative !important;
       top: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+    }
+
+    body.ae-watching .watch-below-the-player {
       margin-top: 0 !important;
+      padding-top: 0 !important;
     }
 
     /* Tối ưu bình luận: thu nhỏ khoảng cách để xem được 4-5 comment cùng lúc */
@@ -340,102 +381,139 @@
       }
       return 'unsupported';
     },
-    extractDownloadStreams() {
+    async extractDownloadStreams() {
       try {
-        const player = document.querySelector('.html5-video-player') || document.querySelector('#movie_player');
-        let playerResp = null;
-        if (player && typeof player.getPlayerResponse === 'function') {
-          playerResp = player.getPlayerResponse();
+        const urlParams = new URLSearchParams(window.location.search);
+        let videoId = urlParams.get('v');
+        if (!videoId) {
+          const m = location.pathname.match(/\/(shorts|watch|v)\/([a-zA-Z0-9_-]+)/);
+          if (m) videoId = m[2];
         }
-        const resp = window.__lastPlayerResponse || playerResp || window.ytInitialPlayerResponse || {};
-        const videoDetails = resp.videoDetails || (player?.getVideoData && player.getVideoData()) || {};
-        const streamingData = resp.streamingData || {};
-        const rawFormats = streamingData.formats || [];
-        const rawAdaptive = streamingData.adaptiveFormats || [];
-        
-        const vidMatch = location.search.match(/v=([^&]+)/);
-        const videoId = videoDetails.videoId || (vidMatch ? vidMatch[1] : 'video');
-        const title = videoDetails.title || document.title.replace(' - YouTube', '').trim();
-        const author = videoDetails.author || 'YouTube';
-        const duration = parseFloat(videoDetails.lengthSeconds) || 0;
+        const player = document.querySelector('.html5-video-player') || document.querySelector('#movie_player');
+        const pData = (player && player.getVideoData) ? player.getVideoData() : {};
+        if (!videoId && pData.video_id) {
+          videoId = pData.video_id;
+        }
+        if (!videoId) return;
+
+        // Lấy tiêu đề và tác giả CHÍNH XÁC của video hiện tại từ DOM để tránh tag video khác
+        let title = document.querySelector('h1.slim-video-metadata-title, .ytm-slim-video-information-title, .slim-video-metadata-header')?.textContent?.trim();
+        if (!title && pData.title) title = pData.title;
+        if (!title) title = document.title.replace(' - YouTube', '').trim();
+
+        let author = document.querySelector('.slim-owner-channel-name, ytm-channel-thumbnail-with-link-renderer + *')?.textContent?.trim();
+        if (!author && pData.author) author = pData.author;
+        if (!author) author = 'YouTube';
+
         const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
-        // Hàm giải mã URL luồng từ cipher/signatureCipher
-        const resolveStreamUrl = (item) => {
-          if (!item) return null;
-          if (item.url) return item.url;
-          const cipher = item.signatureCipher || item.cipher;
-          if (cipher) {
-            const p = new URLSearchParams(cipher);
-            const raw = p.get('url');
-            if (raw) return decodeURIComponent(raw);
+        // Gọi trực tiếp InnerTube ANDROID_VR để lấy stream sạch 1080p, 1440p, 4K, 720p không bị mã hóa signature
+        let targetData = null;
+        try {
+          const res = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              videoId: videoId,
+              context: {
+                client: {
+                  clientName: 'ANDROID_VR',
+                  clientVersion: '1.61.48',
+                  deviceModel: 'Quest 3',
+                  osName: 'Android',
+                  osVersion: '12'
+                }
+              }
+            })
+          });
+          if (res.ok) {
+            targetData = await res.json();
           }
-          return null;
-        };
-        
-        // 1. Tìm luồng âm thanh tốt nhất (ưu tiên AAC/m4a để iOS AVFoundation ghép native tức thì)
+        } catch (e) {
+          console.warn('Aether ANDROID_VR fetch error:', e);
+        }
+
+        // Cập nhật metadata chuẩn từ targetData nếu có
+        if (targetData && targetData.videoDetails) {
+          if (targetData.videoDetails.title) title = targetData.videoDetails.title;
+          if (targetData.videoDetails.author) author = targetData.videoDetails.author;
+        }
+
+        // Thu thập formats: ưu tiên targetData, fallback player responses khớp videoId
+        let streamingData = targetData?.streamingData;
+        if (!streamingData) {
+          const matchedCached = playerResponsesByVid.get(videoId);
+          if (matchedCached && matchedCached.streamingData) {
+            streamingData = matchedCached.streamingData;
+          }
+        }
+
+        const rawAdaptive = streamingData?.adaptiveFormats || [];
+        const rawFormats = streamingData?.formats || [];
+
+        // Tìm luồng âm thanh tốt nhất (AAC/m4a để iOS AVFoundation ghép native tức thì)
         let bestAudioUrl = null;
+        let highestAudioBitrate = 0;
         for (const a of rawAdaptive) {
-          const u = resolveStreamUrl(a);
-          if (u && a.mimeType && a.mimeType.startsWith('audio/')) {
+          if (a.url && a.mimeType && a.mimeType.startsWith('audio/')) {
             const isAAC = a.mimeType.includes('mp4a') || a.mimeType.includes('audio/mp4');
-            if (!bestAudioUrl || isAAC) {
-              bestAudioUrl = u;
-              if (isAAC) break;
+            const br = a.bitrate || 0;
+            if (isAAC && (!bestAudioUrl || br > highestAudioBitrate)) {
+              bestAudioUrl = a.url;
+              highestAudioBitrate = br;
+            } else if (!bestAudioUrl) {
+              bestAudioUrl = a.url;
             }
           }
         }
-        
+
         const qualityMap = new Map();
-        
-        // 2. Quét các luồng Adaptive chất lượng cao (1080p, 1440p 2K, 4K, 720p)
+
+        // Quét các luồng Adaptive chất lượng cao: TUYỆT ĐỐI CHỈ LẤY >= 720p (720p, 1080p, 1440p, 2160p)
         for (const v of rawAdaptive) {
-          if (!v.mimeType || !v.mimeType.startsWith('video/')) continue;
-          const u = resolveStreamUrl(v);
-          if (!u) continue;
+          if (!v.url || !v.mimeType || !v.mimeType.startsWith('video/')) continue;
           const h = v.height || parseInt(v.qualityLabel) || 0;
-          if (h < 720) continue; // Loại bỏ hoàn toàn 360p, 480p
-          
+          if (h < 720) continue; // Nghiêm cấm 360p, 480p
+
           let label = v.qualityLabel || `${h}p`;
           if (h >= 2160) label = '2160p (4K Ultra HD)';
           else if (h >= 1440) label = '1440p (2K QHD)';
           else if (h >= 1080) label = '1080p Full HD';
           else if (h >= 720) label = '720p HD';
-          
+
           const isH264 = v.mimeType.includes('avc1') || v.mimeType.includes('mp4');
           if (!qualityMap.has(h) || isH264) {
             qualityMap.set(h, {
               quality: label,
               height: h,
-              url: u,
+              url: v.url,
               audioUrl: bestAudioUrl,
               mimeType: v.mimeType
             });
           }
         }
-        
-        // 3. Quét các luồng Progressive (đã có sẵn cả hình và tiếng, chỉ lấy >= 720p)
+
+        // Quét các luồng Progressive (có sẵn âm thanh, >= 720p)
         for (const f of rawFormats) {
-          const u = resolveStreamUrl(f);
-          if (!u) continue;
+          if (!f.url) continue;
           const h = f.height || parseInt(f.qualityLabel) || 0;
           if (h < 720) continue;
-          
+
           let label = f.qualityLabel || `${h}p`;
           if (h >= 720 && !label.includes('HD')) label = '720p HD';
-          
+
           if (!qualityMap.has(h)) {
             qualityMap.set(h, {
               quality: label,
               height: h,
-              url: u,
+              url: f.url,
               audioUrl: null,
               mimeType: f.mimeType
             });
           }
         }
 
-        // 4. Fallback: Nếu YouTube không đưa ra adaptive qua API, lấy luồng đang nạp trên <video>
+        // Fallback: Nếu không có adaptive, lấy luồng đang nạp trên <video>
         const activeVideo = document.querySelector('video');
         if (qualityMap.size === 0 && activeVideo && activeVideo.src && activeVideo.src.startsWith('http')) {
           qualityMap.set(720, {
@@ -446,10 +524,12 @@
             mimeType: 'video/mp4'
           });
         }
-        
+
         const sortedStreams = Array.from(qualityMap.values())
           .sort((a, b) => b.height - a.height);
-        
+
+        const duration = parseFloat(targetData?.videoDetails?.lengthSeconds) || activeVideo?.duration || 0;
+
         window.webkit?.messageHandlers?.downloadData?.postMessage({
           videoId: videoId,
           title: title,
@@ -466,15 +546,29 @@
 
   // ── 5. Hỗ trợ xoay ngang màn hình toàn màn hình (Landscape Fullscreen) ──────
   document.addEventListener('click', (e) => {
-    const fsBtn = e.target.closest('.fullscreen-icon, .ytp-fullscreen-button, button[aria-label*="Fullscreen"], button[aria-label*="Toàn màn hình"], button[aria-label*="toàn màn hình"]');
+    const fsBtn = e.target.closest(
+      '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], .icon-button[aria-label*="screen"]'
+    );
     if (fsBtn) {
       const v = currentVideo();
-      if (v && v.webkitEnterFullscreen) {
+      if (v) {
         e.preventDefault();
         e.stopPropagation();
-        v.webkitEnterFullscreen();
+        try {
+          window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'enterFullscreen' });
+        } catch (_) {}
+        if (v.webkitEnterFullscreen) {
+          v.webkitEnterFullscreen();
+        }
       }
     }
+  }, true);
+
+  // Khi thoát fullscreen video trên iOS
+  document.addEventListener('webkitendfullscreen', () => {
+    try {
+      window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'exitFullscreen' });
+    } catch (_) {}
   }, true);
 
   // Tự động vào Native iOS Fullscreen khi người dùng xoay ngang điện thoại lúc xem video

@@ -7,14 +7,14 @@ struct ContentView: View {
     @State private var showSplash = true
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
 
             WebViewContainer(webView: web.webView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 
-            // Nút Back / Thu nhỏ video (Góc trên bên trái khi đang xem video)
+            // Thanh điều khiển Video Player (Back bên trái + Tải & PiP bên phải)
             if web.isWatching {
                 VStack {
                     HStack {
@@ -23,105 +23,66 @@ struct ContentView: View {
                             web.goBackToHome()
                         } label: {
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 16, weight: .bold))
+                                .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(.white)
-                                .frame(width: 38, height: 38)
+                                .frame(width: 36, height: 36)
                                 .background(.ultraThinMaterial, in: Circle())
                                 .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
-                                .shadow(color: .black.opacity(0.3), radius: 6)
+                                .shadow(color: .black.opacity(0.35), radius: 6)
                         }
                         .buttonStyle(ScaleButtonStyle())
-                        .padding(.leading, 16)
-                        .padding(.top, 50)
+                        .padding(.leading, 14)
+
                         Spacer()
+
+                        HStack(spacing: 8) {
+                            Button {
+                                Haptic.feedback(.medium)
+                                web.requestDownload()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.down.to.line")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text("Tải")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .overlay(Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 0.5))
+                                .shadow(color: .black.opacity(0.3), radius: 6)
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+
+                            PiPButton(action: {
+                                Haptic.feedback(.light)
+                                web.togglePiP()
+                            })
+                        }
+                        .padding(.trailing, 14)
                     }
+                    .padding(.top, 50)
+
                     Spacer()
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
                 .zIndex(6)
             }
 
-            // Nút Thư viện Ngoại Tuyến (Góc trên bên phải khi ở trang chủ)
-            if !web.isWatching && !web.isInitialLoading {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button {
-                            Haptic.feedback(.light)
-                            web.showOfflineLibrary = true
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "arrow.down.circle.fill")
-                                    .font(.system(size: 15, weight: .semibold))
-                                if !offlineManager.downloadedVideos.isEmpty {
-                                    Text("\(offlineManager.downloadedVideos.count)")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .contentTransition(.numericText())
-                                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: offlineManager.downloadedVideos.count)
-                                }
-                            }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
-                            .shadow(color: .black.opacity(0.25), radius: 6)
-                        }
-                        .buttonStyle(ScaleButtonStyle())
-                        .padding(.trailing, 16)
-                        .padding(.top, 50)
+            // Màn hình Thư viện Ngoại Tuyến toàn trang (Dedicated Full Page)
+            if web.showOfflineLibrary {
+                OfflineLibraryView(onBack: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        web.showOfflineLibrary = false
                     }
-                    Spacer()
-                }
-                .transition(.opacity)
-                .zIndex(6)
-            }
-
-            // Thanh công cụ nổi góc dưới phải (PiP + Tải xuống) khi xem video
-            if web.isWatching {
-                HStack(spacing: 8) {
-                    // Nút Tải xuống video
-                    Button {
-                        Haptic.feedback(.medium)
-                        web.requestDownload()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.to.line")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Tải")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(
-                            Capsule().strokeBorder(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.28), .white.opacity(0.08)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.6
-                            )
-                        )
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-
-                    // Nút PiP
-                    PiPButton(action: {
-                        Haptic.feedback(.light)
-                        web.togglePiP()
-                    })
-                }
-                .padding(.trailing, 16)
-                .safeAreaPadding(.bottom)
-                .padding(.bottom, 10)
-                .transition(
-                    .scale(scale: 0.6, anchor: .bottomTrailing)
-                    .combined(with: .opacity)
-                )
-                .zIndex(5)
+                })
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing),
+                    removal: .move(edge: .trailing)
+                ))
+                .zIndex(20)
+                .ignoresSafeArea()
             }
 
             // Cinematic Netflix-Style Splash Screen: hiển thị khi mở app, tự động biến mất mượt mà
@@ -133,12 +94,13 @@ struct ContentView: View {
                     }
                 }
                 .transition(.opacity)
-                .zIndex(10)
+                .zIndex(30)
                 .ignoresSafeArea()
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching)
         .animation(.easeInOut(duration: 0.3), value: showSplash)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: web.showOfflineLibrary)
         .task {
             web.start()
             // Bảo hiểm: sau 1.35s bắt buộc tắt splash dù bất kể mạng hay môi trường LiveContainer
@@ -168,10 +130,6 @@ struct ContentView: View {
                 }
                 .presentationDetents([.medium])
             }
-        }
-        // Sheet danh sách video đã tải ngoại tuyến
-        .sheet(isPresented: $web.showOfflineLibrary) {
-            OfflineLibraryView()
         }
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import AVKit
 
 struct OfflineLibraryView: View {
+    var onBack: (() -> Void)? = nil
     @ObservedObject var offlineManager = OfflineManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var playingVideo: OfflineVideo?
@@ -31,9 +32,22 @@ struct OfflineLibraryView: View {
             .navigationTitle("Video Ngoại Tuyến")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Đóng") { dismiss() }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if let onBack = onBack {
+                            onBack()
+                        } else {
+                            dismiss()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Quay lại")
+                                .font(.system(size: 16, weight: .medium))
+                        }
                         .foregroundStyle(.white)
+                    }
                 }
             }
             .fullScreenCover(item: $playingVideo) { video in
