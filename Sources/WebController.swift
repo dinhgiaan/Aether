@@ -73,7 +73,7 @@ final class WebController: NSObject, ObservableObject {
 
         webView.customUserAgent = Config.userAgent
         webView.allowsBackForwardNavigationGestures = true
-        webView.isOpaque = false
+        webView.isOpaque = true
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
         // Fix: safe-area trên trang login bị trắng — để WKWebView tự quản lý inset

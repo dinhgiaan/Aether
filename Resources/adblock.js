@@ -28,11 +28,22 @@
 
   // Hook cả 3 đường dữ liệu: JSON.parse, fetch().json(), ytInitialPlayerResponse nhúng trong HTML
   const nativeParse = JSON.parse;
-  JSON.parse = function () { return prune(nativeParse.apply(this, arguments)); };
+  JSON.parse = function (...args) {
+    try {
+      const data = nativeParse.apply(this, args);
+      return prune(data);
+    } catch (_) {
+      return nativeParse.apply(this, args);
+    }
+  };
 
   if (window.Response && Response.prototype.json) {
     const nativeJson = Response.prototype.json;
-    Response.prototype.json = function () { return nativeJson.apply(this, arguments).then(prune); };
+    Response.prototype.json = function (...args) {
+      return nativeJson.apply(this, args).then((data) => {
+        try { return prune(data); } catch (_) { return data; }
+      });
+    };
   }
 
   let initialPlayerResponse;

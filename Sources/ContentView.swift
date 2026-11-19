@@ -11,6 +11,7 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
 
             WebViewContainer(webView: web.webView)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 
             // Nút Back / Thu nhỏ video (Góc trên bên trái khi đang xem video)

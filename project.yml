@@ -12,17 +12,9 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-    DEAD_CODE_STRIPPING: "YES"
-    SWIFT_COMPILATION_MODE: "wholemodule"
   configs:
     Release:
       SWIFT_OPTIMIZATION_LEVEL: "-O"
-      GCC_OPTIMIZATION_LEVEL: "s"
-      DEPLOYMENT_POSTPROCESSING: "YES"
-      STRIP_INSTALLED_PRODUCT: "YES"
-      STRIP_SWIFT_SYMBOLS: "YES"
-      COPY_PHASE_STRIP: "YES"
-      OTHER_SWIFT_FLAGS: ["-Xfrontend", "-disable-reflection-metadata"]
 targets:
   Aether:
     type: application
