@@ -46,7 +46,6 @@ final class WebController: NSObject, ObservableObject {
     let webView: WKWebView
     private let contentController = WKUserContentController()
     private var urlObservation: NSKeyValueObservation?
-    private var splashFallbackTimer: Task<Void, Never>?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -102,32 +101,29 @@ final class WebController: NSObject, ObservableObject {
         
         setupRemoteCommands()
         
-        // Timer dự phòng tối đa 1.4s để tắt splash screen nếu mạng chậm
-        splashFallbackTimer = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
-            await MainActor.run {
-                self?.dismissSplash()
-            }
+        // Timer dự phòng tối đa 0.8s để tắt splash screen bất kể mạng nhanh hay chậm
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.dismissSplash()
         }
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
         urlObservation?.invalidate()
-        splashFallbackTimer?.cancel()
     }
 
     func dismissSplash() {
-        if isInitialLoading {
-            isInitialLoading = false
-        }
+        guard isInitialLoading else { return }
+        isInitialLoading = false
     }
 
-    // Nạp rule chặn request trước rồi mới load trang, tránh ad lọt lúc khởi động
-    func start() async {
+    // Tải trang web YouTube ngay lập tức, không đợi loadBlocklist
+    func start() {
         guard webView.url == nil else { return }
-        await loadBlocklist()
         webView.load(URLRequest(url: Config.home))
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.loadBlocklist()
+        }
     }
 
     // Cache-aware: thử lấy blocklist đã compile từ disk, chỉ compile lại khi chưa có.

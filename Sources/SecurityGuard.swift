@@ -13,23 +13,15 @@ enum SecurityGuard {
         #endif
     }
     
-    // MARK: - 1. Chống đính kèm Debugger (Anti-Debugging via ptrace)
+    // MARK: - 1. Kiểm tra Debugger (An toàn cho Sideload / LiveContainer / AltStore)
     private static func preventDebuggerAttachment() {
-        // PT_DENY_ATTACH = 31: từ chối mọi debugger (lldb, gdb, frida-server) đính kèm vào process
-        typealias PtraceType = @convention(c) (CInt, pid_t, CInt, CInt) -> CInt
-        let handle = dlopen(nil, RTLD_GLOBAL | RTLD_NOW)
-        if let sym = dlsym(handle, "ptrace") {
-            let ptrace = unsafeBitCast(sym, to: PtraceType.self)
-            _ = ptrace(31, 0, 0, 0)
-        }
-        
-        // Kiểm tra cờ P_TRACED trong proc_info bằng sysctl
+        // Kiểm tra cờ P_TRACED trong proc_info bằng sysctl (chỉ ghi log cảnh báo, không can thiệp luồng tiến trình)
         var info = kinfo_proc()
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
         var size = MemoryLayout<kinfo_proc>.stride
         let junk = sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0)
         if junk == 0 && (info.kp_proc.p_flag & P_TRACED) != 0 {
-            NSLog("Aether: Warning - Process is being traced by an external tool.")
+            NSLog("Aether: Note - Process is being monitored or sideloaded with developer mode.")
         }
     }
     

@@ -124,15 +124,21 @@ struct ContentView: View {
 
             // Splash Screen: hiển thị khi mở app, tự động biến mất siêu nhanh khi trang sẵn sàng
             if web.isInitialLoading {
-                SplashView()
-                    .transition(.opacity)
-                    .zIndex(10)
-                    .ignoresSafeArea()
+                SplashView {
+                    web.dismissSplash()
+                }
+                .transition(.opacity)
+                .zIndex(10)
+                .ignoresSafeArea()
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching)
         .animation(.easeInOut(duration: 0.3), value: web.isInitialLoading)
-        .task { await web.start() }
+        .task {
+            web.start()
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            web.dismissSplash()
+        }
         // Sheet chọn chất lượng tải xuống
         .sheet(isPresented: $web.showDownloadSheet) {
             if let info = web.activeDownloadInfo {
@@ -287,6 +293,7 @@ private struct PiPButton: View {
 
 // MARK: – Splash / loading screen
 private struct SplashView: View {
+    var onDismiss: (() -> Void)? = nil
     @State private var scale: CGFloat = 0.85
     @State private var glowOpacity: Double = 0.0
 
@@ -320,12 +327,19 @@ private struct SplashView: View {
                     .opacity(glowOpacity)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onDismiss?()
+        }
         .onAppear {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.68)) {
                 scale = 1.0
             }
             withAnimation(.easeOut(duration: 0.4).delay(0.1)) {
                 glowOpacity = 1.0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                onDismiss?()
             }
         }
     }
