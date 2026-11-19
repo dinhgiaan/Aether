@@ -291,35 +291,59 @@ private struct PiPButton: View {
     }
 }
 
-// MARK: – Splash / loading screen
+// MARK: – Splash / loading screen (Celestial Eclipse Theme)
 private struct SplashView: View {
     var onDismiss: (() -> Void)? = nil
-    @State private var scale: CGFloat = 0.85
+    @State private var scale: CGFloat = 0.82
     @State private var glowOpacity: Double = 0.0
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color(red: 0.06, green: 0.06, blue: 0.08).ignoresSafeArea()
 
+            // Vầng hào quang nhật thực ấm áp
             Circle()
-                .fill(Color.red.opacity(0.22))
-                .frame(width: 130, height: 130)
-                .blur(radius: 36)
+                .fill(
+                    RadialGradient(
+                        colors: [Color(red: 0.95, green: 0.45, blue: 0.15).opacity(0.35),
+                                 Color(red: 0.85, green: 0.15, blue: 0.25).opacity(0.12),
+                                 Color.clear],
+                        center: .center,
+                        startRadius: 10,
+                        endRadius: 90
+                    )
+                )
+                .frame(width: 180, height: 180)
+                .blur(radius: 20)
                 .opacity(glowOpacity)
 
-            VStack(spacing: 16) {
-                Image(systemName: "play.circle.fill")
-                    .font(.system(size: 68))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color(red: 1, green: 0.2, blue: 0.15),
-                                     Color(red: 0.85, green: 0, blue: 0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+            VStack(spacing: 20) {
+                // Biểu tượng Celestial Eclipse
+                ZStack {
+                    // Vòng tròn hào quang mặt trời
+                    Circle()
+                        .strokeBorder(
+                            AngularGradient(
+                                colors: [
+                                    Color(red: 0.98, green: 0.72, blue: 0.15),
+                                    Color(red: 0.95, green: 0.25, blue: 0.25),
+                                    Color(red: 0.75, green: 0.10, blue: 0.20),
+                                    Color(red: 0.98, green: 0.72, blue: 0.15)
+                                ],
+                                center: .center
+                            ),
+                            lineWidth: 5
                         )
-                    )
-                    .scaleEffect(scale)
-                    .shadow(color: .red.opacity(0.45), radius: 24, y: 8)
+                        .frame(width: 76, height: 76)
+                        .shadow(color: Color(red: 0.95, green: 0.35, blue: 0.15).opacity(0.4), radius: 12)
+
+                    // Tam giác Play tối giản
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.white)
+                        .offset(x: 2.5) // Cân bằng thị giác
+                }
+                .scaleEffect(scale)
 
                 Text("Aether")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
@@ -332,7 +356,7 @@ private struct SplashView: View {
             onDismiss?()
         }
         .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.68)) {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.65)) {
                 scale = 1.0
             }
             withAnimation(.easeOut(duration: 0.4).delay(0.1)) {
