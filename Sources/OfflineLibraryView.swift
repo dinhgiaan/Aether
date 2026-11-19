@@ -51,7 +51,23 @@ struct OfflineLibraryView: View {
                 }
             }
             .fullScreenCover(item: $playingVideo) { video in
-                NativeVideoPlayer(url: video.videoURL, title: video.title)
+                ZStack(alignment: .topTrailing) {
+                    NativeVideoPlayer(url: video.videoURL, title: video.title) {
+                        playingVideo = nil
+                    }
+                    .ignoresSafeArea()
+                    
+                    Button {
+                        playingVideo = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .background(Circle().fill(Color.black.opacity(0.6)))
+                            .padding(.top, 52)
+                            .padding(.trailing, 20)
+                    }
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -142,6 +158,12 @@ private struct DownloadedListSection: View {
 private struct DownloadedVideoRow: View {
     let video: OfflineVideo
     
+    private var isCorrupted: Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
+              let size = attrs[.size] as? Int64 else { return true }
+        return size < 10_000
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
             VideoThumbnailView(thumbnailURL: video.thumbnailURL)
@@ -168,13 +190,25 @@ private struct DownloadedVideoRow: View {
                         .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
                         .foregroundStyle(.white)
                 }
+                
+                if isCorrupted {
+                    Text("File bị lỗi – Vuốt sang trái để xoá")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                }
             }
             
             Spacer()
             
-            Image(systemName: "play.circle.fill")
-                .font(.title3)
-                .foregroundStyle(.red)
+            if isCorrupted {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.yellow)
+            } else {
+                Image(systemName: "play.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+            }
         }
     }
 }
@@ -206,6 +240,11 @@ private struct VideoThumbnailView: View {
 struct NativeVideoPlayer: UIViewControllerRepresentable {
     let url: URL
     let title: String
+    var onDismiss: (() -> Void)? = nil
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDismiss: onDismiss)
+    }
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
@@ -217,9 +256,21 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
         controller.showsPlaybackControls = true
+        controller.delegate = context.coordinator
         player.play()
         return controller
     }
     
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+    
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        var onDismiss: (() -> Void)?
+        init(onDismiss: (() -> Void)?) {
+            self.onDismiss = onDismiss
+        }
+        
+        func playerViewControllerWillStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            onDismiss?()
+        }
+    }
 }

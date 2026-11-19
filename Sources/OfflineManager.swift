@@ -59,7 +59,19 @@ final class OfflineManager: NSObject, ObservableObject {
             downloadedVideos = []
             return
         }
-        downloadedVideos = list.filter { FileManager.default.fileExists(atPath: $0.videoURL.path) }
+        // Tự động dọn dẹp các file rỗng hoặc bị lỗi từ các phiên bản trước
+        var validVideos: [OfflineVideo] = []
+        for video in list {
+            guard FileManager.default.fileExists(atPath: video.videoURL.path) else { continue }
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
+               let size = attrs[.size] as? Int64, size > 10_000 {
+                validVideos.append(video)
+            } else {
+                try? FileManager.default.removeItem(at: video.videoURL)
+                if let thumb = video.thumbnailURL { try? FileManager.default.removeItem(at: thumb) }
+            }
+        }
+        downloadedVideos = validVideos
     }
     
     private func saveVideos() {
@@ -146,6 +158,7 @@ final class OfflineManager: NSObject, ObservableObject {
         thumbFileName: String?
     ) {
         let delegate = SingleDownloadDelegate(
+            fileExtension: "mp4",
             onProgress: { [weak self] progress, written, expected in
                 Task { @MainActor in
                     guard let self = self else { return }
@@ -283,31 +296,22 @@ final class OfflineManager: NSObject, ObservableObject {
                             )
                         }
                     } catch {
-                        // Fallback an toàn: nếu ghép tiếng gặp sự cố, vẫn lưu file video gốc để người dùng xem được 100%!
-                        NSLog("Aether: Passthrough muxing issue: %@", error.localizedDescription)
-                        try? FileManager.default.removeItem(at: destURL)
-                        try? FileManager.default.copyItem(at: vTemp, to: destURL)
+                        NSLog("Aether: Muxing error: %@", error.localizedDescription)
                         try? FileManager.default.removeItem(at: vTemp)
                         try? FileManager.default.removeItem(at: aTemp)
+                        try? FileManager.default.removeItem(at: destURL)
                         
                         await MainActor.run {
-                            self.finishDownload(
-                                videoId: videoId,
-                                title: title,
-                                author: author,
-                                quality: quality,
-                                duration: duration,
-                                fileName: videoFileName,
-                                thumbName: thumbFileName
-                            )
+                            self.failDownload(videoId: videoId, message: "Lỗi ghép video: \(error.localizedDescription)")
                         }
                     }
                 }
             }
         }
         
-        // Delegate cho luồng video
+        // Delegate cho luồng video (.mp4)
         let vDelegate = SingleDownloadDelegate(
+            fileExtension: "mp4",
             onProgress: { progress, written, expected in
                 vProgress = progress
                 vBytesWritten = written
@@ -322,8 +326,9 @@ final class OfflineManager: NSObject, ObservableObject {
             }
         )
         
-        // Delegate cho luồng audio
+        // Delegate cho luồng audio (.m4a)
         let aDelegate = SingleDownloadDelegate(
+            fileExtension: "m4a",
             onProgress: { progress, written, expected in
                 aProgress = progress
                 aBytesWritten = written
@@ -364,6 +369,14 @@ final class OfflineManager: NSObject, ObservableObject {
         fileName: String,
         thumbName: String?
     ) {
+        let destURL = Self.videosDirectory.appendingPathComponent(fileName)
+        // Kiểm tra kích thước file thật trước khi xác nhận lưu
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: destURL.path),
+              let size = attrs[.size] as? Int64, size > 10_000 else {
+            failDownload(videoId: videoId, message: "File tải về không hợp lệ hoặc bị lỗi")
+            return
+        }
+
         let video = OfflineVideo(
             id: videoId,
             title: title,
@@ -399,7 +412,7 @@ final class OfflineManager: NSObject, ObservableObject {
         }
     }
     
-    // Ghép luồng hình và luồng tiếng native tốc độ cao (0.5s - 1s, không tốn pin)
+    // Ghép luồng hình và luồng tiếng native (Passthrough siêu tốc ~0.3s hoặc Re-encode chất lượng cao)
     private func muxVideoAndAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: videoURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
@@ -415,9 +428,10 @@ final class OfflineManager: NSObject, ObservableObject {
         let vDuration = try await videoAsset.load(.duration)
         let videoRange = CMTimeRange(start: .zero, duration: vDuration)
         
-        if let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try compVideoTrack.insertTimeRange(videoRange, of: videoTrack, at: .zero)
+        guard let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw NSError(domain: "AetherMux", code: -2, userInfo: [NSLocalizedDescriptionKey: "Không tạo được video track"])
         }
+        try compVideoTrack.insertTimeRange(videoRange, of: videoTrack, at: .zero)
         
         if let audioTrack = audioTracks.first {
             let aDuration = try await audioAsset.load(.duration)
@@ -432,19 +446,32 @@ final class OfflineManager: NSObject, ObservableObject {
         try? FileManager.default.createDirectory(at: Self.videosDirectory, withIntermediateDirectories: true, attributes: nil)
         try? FileManager.default.removeItem(at: outputURL)
         
-        // Sử dụng AVAssetExportPresetHighestQuality để chuyển đổi DASH fMP4 thành file MP4 hoàn chỉnh có cả hình lẫn tiếng
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            throw NSError(domain: "AetherMux", code: -2, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo AVAssetExportSession"])
+        // Cách 1: Ưu tiên Passthrough muxing (nhanh như chớp ~0.3s, không tốn pin)
+        var passthroughSuccess = false
+        if let passSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) {
+            passSession.outputURL = outputURL
+            passSession.outputFileType = .mp4
+            passSession.shouldOptimizeForNetworkUse = true
+            await passSession.export()
+            if passSession.status == .completed {
+                passthroughSuccess = true
+            }
         }
         
-        session.outputURL = outputURL
-        session.outputFileType = .mp4
-        session.shouldOptimizeForNetworkUse = true
-        
-        await session.export()
-        
-        if session.status != .completed {
-            throw session.error ?? NSError(domain: "AetherMux", code: -3, userInfo: [NSLocalizedDescriptionKey: "Lỗi xuất file ghép MP4"])
+        // Cách 2: Nếu passthrough không hỗ trợ chunk DASH, dùng AVAssetExportPresetHighestQuality
+        if !passthroughSuccess {
+            try? FileManager.default.removeItem(at: outputURL)
+            guard let encodeSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+                throw NSError(domain: "AetherMux", code: -3, userInfo: [NSLocalizedDescriptionKey: "Không thể tạo bộ xuất video"])
+            }
+            encodeSession.outputURL = outputURL
+            encodeSession.outputFileType = .mp4
+            encodeSession.shouldOptimizeForNetworkUse = true
+            await encodeSession.export()
+            
+            if encodeSession.status != .completed {
+                throw encodeSession.error ?? NSError(domain: "AetherMux", code: -4, userInfo: [NSLocalizedDescriptionKey: "Lỗi xuất file ghép MP4"])
+            }
         }
     }
     
@@ -475,10 +502,12 @@ final class OfflineManager: NSObject, ObservableObject {
 
 // MARK: – URLSessionDownloadDelegate cho phép lắng nghe % tiến trình từng chunk
 private final class SingleDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let fileExtension: String
     let onProgress: (Double, Int64, Int64) -> Void
     let onComplete: (URL?, Error?) -> Void
     
-    init(onProgress: @escaping (Double, Int64, Int64) -> Void, onComplete: @escaping (URL?, Error?) -> Void) {
+    init(fileExtension: String = "mp4", onProgress: @escaping (Double, Int64, Int64) -> Void, onComplete: @escaping (URL?, Error?) -> Void) {
+        self.fileExtension = fileExtension
         self.onProgress = onProgress
         self.onComplete = onComplete
     }
@@ -491,7 +520,7 @@ private final class SingleDownloadDelegate: NSObject, URLSessionDownloadDelegate
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         // Bắt buộc phải di chuyển file tạm ngay lập tức trước khi delegate này kết thúc,
         // nếu không hệ điều hành iOS sẽ tự động xoá file tại `location`!
-        let safeTemp = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_" + UUID().uuidString + ".tmp")
+        let safeTemp = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_\(UUID().uuidString).\(fileExtension)")
         do {
             try? FileManager.default.removeItem(at: safeTemp)
             try FileManager.default.moveItem(at: location, to: safeTemp)

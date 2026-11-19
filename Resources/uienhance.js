@@ -66,6 +66,17 @@
       background: rgba(255, 255, 255, 0.14) !important;
     }
 
+    /* Ẩn triệt để Shorts Tab và Kệ Shorts trên Home Feed */
+    ytm-pivot-bar-item-renderer:has(a[href*="shorts"]),
+    ytm-pivot-bar-item-renderer:has([aria-label*="Shorts"]),
+    ytm-pivot-bar-item-renderer:has([aria-label*="shorts"]),
+    ytm-reel-shelf-renderer,
+    ytm-rich-section-renderer:has(a[href*="/shorts/"]),
+    ytm-rich-section-renderer:has(ytm-reel-item-renderer),
+    ytm-item-section-renderer:has(ytm-reel-item-renderer) {
+      display: none !important;
+    }
+
     /* ── Content clearance so floating bar doesn't cover items ──────────── */
     .page-container {
       padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 85px) !important;
@@ -411,52 +422,28 @@
     }
   };
 
-  // ── 4b. Nhúng nút Tải trực tiếp vào Action Bar của YouTube dưới video ─────
-  const injectDownloadButtonInActionBar = () => {
-    if (!location.pathname.startsWith('/watch')) return;
-    const actionBar = document.querySelector('ytm-slim-video-action-bar-renderer .slim-video-action-bar-actions');
-    if (!actionBar || document.getElementById('ae-action-download-btn')) return;
-
-    const btn = document.createElement('button');
-    btn.id = 'ae-action-download-btn';
-    btn.className = 'slim-video-action-bar-action-item';
-    btn.style.cssText = `
-      background: rgba(255, 255, 255, 0.12);
-      border: 0.5px solid rgba(255, 255, 255, 0.20);
-      border-radius: 999px;
-      padding: 7px 14px;
-      margin-right: 8px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: #ffffff;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      flex-shrink: 0;
-    `;
-    btn.innerHTML = `
-      <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:none;stroke:#ffffff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-        <polyline points="7 10 12 15 17 10"></polyline>
-        <line x1="12" y1="15" x2="12" y2="3"></line>
-      </svg>
-      <span>Tải</span>
-    `;
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const vid = new URLSearchParams(location.search).get('v');
-      try {
-        window.webkit?.messageHandlers?.aetherNav?.postMessage({
-          action: 'requestDownload',
-          videoId: vid || ''
-        });
-      } catch (_) {
-        window.__aeMedia?.extractDownloadStreams();
+  // ── 4b. Xoá triệt để Tab Shorts và các Kệ Shorts trên trang chủ ─────────
+  const removeShortsElements = () => {
+    // Xoá tab Shorts khỏi Bottom Bar
+    const pivotTabs = document.querySelectorAll('ytm-pivot-bar-item-renderer');
+    pivotTabs.forEach((tab) => {
+      const text = tab.textContent || '';
+      const aria = tab.getAttribute('aria-label') || '';
+      const href = tab.querySelector('a')?.getAttribute('href') || '';
+      if (text.includes('Shorts') || aria.includes('Shorts') || href.includes('/shorts')) {
+        tab.style.display = 'none';
+        tab.remove();
       }
     });
-    actionBar.insertBefore(btn, actionBar.firstChild);
+
+    // Xoá các kệ/giá sách Shorts trên Feed trang chủ
+    const shelves = document.querySelectorAll('ytm-rich-section-renderer, ytm-reel-shelf-renderer, ytm-item-section-renderer');
+    shelves.forEach((el) => {
+      if (el.querySelector('a[href*="/shorts/"], ytm-reel-item-renderer, [aria-label*="Shorts"]')) {
+        el.style.display = 'none';
+        el.remove();
+      }
+    });
   };
 
   // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
@@ -491,8 +478,8 @@
       getBar()?.classList.remove('ae-hidden');
       replaceLogoWithAether();
       cleanProfileMenu();
+      removeShortsElements();
       injectDownloadsTab();
-      injectDownloadButtonInActionBar();
     };
 
     window.addEventListener('popstate', refreshUI);
@@ -511,8 +498,8 @@
       window.requestAnimationFrame(() => {
         replaceLogoWithAether();
         cleanProfileMenu();
+        removeShortsElements();
         injectDownloadsTab();
-        injectDownloadButtonInActionBar();
         moScheduled = false;
       });
     });
@@ -537,5 +524,16 @@
       const tab = e.target.closest('ytm-pivot-bar-item-renderer, .ae-dl-tab');
       if (tab) tab.style.transform = '';
     }, { passive: true });
+
+    // Tự động đóng PiP cũ khi người dùng bấm xem video mới trong ứng dụng
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href*="/watch"], a[href*="watch?v="]');
+      if (a) {
+        const v = document.querySelector('video');
+        if (v && v.webkitPresentationMode === 'picture-in-picture') {
+          try { v.webkitSetPresentationMode('inline'); } catch (_) {}
+        }
+      }
+    }, true);
   }, { once: true });
 })();
