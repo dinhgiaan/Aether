@@ -170,35 +170,18 @@ final class WebController: NSObject, ObservableObject {
     }
     
     func handleSwipeDown() {
-        // Vuốt video xuống: thu nhỏ video thành Picture-in-Picture nổi tiếp tục phát không bị tắt và quay về trang trước
+        // Vuốt video xuống: Đóng video và lùi về trang trước (trang chủ / trang xuất phát) mượt mà
         let js = """
         (() => {
           const v = document.querySelector('.html5-video-player video, video');
-          if (v && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
-            if (v.paused) { v.play().catch(() => {}); }
-            v.webkitSetPresentationMode('picture-in-picture');
-            
-            // Di chuyển <video> ra document.body để bảo vệ khỏi bị tiêu huỷ khi YouTube unmount trang xem video
-            if (v.parentNode !== document.body) {
-              v.style.position = 'fixed';
-              v.style.top = '-9999px';
-              v.style.left = '-9999px';
-              v.style.width = '1px';
-              v.style.height = '1px';
-              v.style.opacity = '0';
-              v.style.pointerEvents = 'none';
-              document.body.appendChild(v);
-            }
+          if (v && v.webkitPresentationMode === 'picture-in-picture') {
+            try { v.webkitSetPresentationMode('inline'); } catch (_) {}
           }
-          
-          // Chờ 250ms để WebKit gắn kết PiP an toàn rồi lùi về trang trước mượt mà
-          setTimeout(() => {
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              window.location.href = '/';
-            }
-          }, 250);
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = '/';
+          }
         })();
         """
         run(js)

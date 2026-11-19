@@ -124,6 +124,11 @@
     const isWatch = location.pathname.startsWith('/watch');
     document.body?.classList.toggle('ae-watching', isWatch);
     if (isWatch) {
+      // Đảm bảo không bị PiP zombie khi mở video mới
+      const v = currentVideo();
+      if (v && v.webkitPresentationMode === 'picture-in-picture') {
+        try { v.webkitSetPresentationMode('inline'); } catch (_) {}
+      }
       // Dọn dẹp video detached cũ nếu có khi mở trang xem mới
       const detached = document.body?.querySelectorAll(':scope > video');
       if (detached && detached.length > 0) {

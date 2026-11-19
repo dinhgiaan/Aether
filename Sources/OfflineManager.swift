@@ -161,10 +161,11 @@ final class OfflineManager: NSObject, ObservableObject {
                     self.activeSessions.removeValue(forKey: videoId)
                     self.downloadDelegates.removeValue(forKey: videoId)
                     
-                    if let tempURL = tempURL, error == nil {
+                    if let safeTemp = tempURL, error == nil {
+                        try? FileManager.default.createDirectory(at: Self.videosDirectory, withIntermediateDirectories: true, attributes: nil)
                         try? FileManager.default.removeItem(at: destURL)
                         do {
-                            try FileManager.default.moveItem(at: tempURL, to: destURL)
+                            try FileManager.default.moveItem(at: safeTemp, to: destURL)
                             self.finishDownload(
                                 videoId: videoId,
                                 title: title,
@@ -176,6 +177,7 @@ final class OfflineManager: NSObject, ObservableObject {
                             )
                         } catch {
                             self.failDownload(videoId: videoId, message: "Lỗi lưu file: \(error.localizedDescription)")
+                            try? FileManager.default.removeItem(at: safeTemp)
                         }
                     } else {
                         self.failDownload(videoId: videoId, message: error?.localizedDescription ?? "Lỗi tải file")
@@ -248,8 +250,8 @@ final class OfflineManager: NSObject, ObservableObject {
                 
                 if let err = downloadError {
                     self.failDownload(videoId: videoId, message: "Lỗi tải: \(err.localizedDescription)")
-                    try? FileManager.default.removeItem(at: tempVideoURL)
-                    try? FileManager.default.removeItem(at: tempAudioURL)
+                    if let v = vTempDownloaded { try? FileManager.default.removeItem(at: v) }
+                    if let a = aTempDownloaded { try? FileManager.default.removeItem(at: a) }
                     return
                 }
                 
@@ -258,26 +260,16 @@ final class OfflineManager: NSObject, ObservableObject {
                     return
                 }
                 
-                try? FileManager.default.removeItem(at: tempVideoURL)
-                try? FileManager.default.removeItem(at: tempAudioURL)
-                
-                do {
-                    try FileManager.default.moveItem(at: vTemp, to: tempVideoURL)
-                    try FileManager.default.moveItem(at: aTemp, to: tempAudioURL)
-                } catch {
-                    self.failDownload(videoId: videoId, message: "Lỗi ghi file tạm: \(error.localizedDescription)")
-                    return
-                }
-                
-                self.activeDownloadStatus[videoId] = "Đang tối ưu & hoàn tất file..."
-                self.activeDownloadProgress[videoId] = 0.96
+                try? FileManager.default.createDirectory(at: Self.videosDirectory, withIntermediateDirectories: true, attributes: nil)
+                self.activeDownloadStatus[videoId] = "Đang ghép nối & lưu video..."
+                self.activeDownloadProgress[videoId] = 0.95
                 
                 // Ghép nối AVFoundation Passthrough native
                 Task.detached(priority: .userInitiated) {
                     do {
-                        try await self.muxVideoAndAudio(videoURL: tempVideoURL, audioURL: tempAudioURL, outputURL: destURL)
-                        try? FileManager.default.removeItem(at: tempVideoURL)
-                        try? FileManager.default.removeItem(at: tempAudioURL)
+                        try await self.muxVideoAndAudio(videoURL: vTemp, audioURL: aTemp, outputURL: destURL)
+                        try? FileManager.default.removeItem(at: vTemp)
+                        try? FileManager.default.removeItem(at: aTemp)
                         
                         await MainActor.run {
                             self.finishDownload(
@@ -291,12 +283,12 @@ final class OfflineManager: NSObject, ObservableObject {
                             )
                         }
                     } catch {
-                        // Fallback an toàn tuyệt đối: nếu ghép tiếng gặp sự cố, vẫn lưu file video gốc để người dùng xem được 100%!
+                        // Fallback an toàn: nếu ghép tiếng gặp sự cố, vẫn lưu file video gốc để người dùng xem được 100%!
                         NSLog("Aether: Passthrough muxing issue: %@", error.localizedDescription)
                         try? FileManager.default.removeItem(at: destURL)
-                        try? FileManager.default.copyItem(at: tempVideoURL, to: destURL)
-                        try? FileManager.default.removeItem(at: tempVideoURL)
-                        try? FileManager.default.removeItem(at: tempAudioURL)
+                        try? FileManager.default.copyItem(at: vTemp, to: destURL)
+                        try? FileManager.default.removeItem(at: vTemp)
+                        try? FileManager.default.removeItem(at: aTemp)
                         
                         await MainActor.run {
                             self.finishDownload(
@@ -503,7 +495,16 @@ private final class SingleDownloadDelegate: NSObject, URLSessionDownloadDelegate
     }
     
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        onComplete(location, nil)
+        // Bắt buộc phải di chuyển file tạm ngay lập tức trước khi delegate này kết thúc,
+        // nếu không hệ điều hành iOS sẽ tự động xoá file tại `location`!
+        let safeTemp = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_" + UUID().uuidString + ".tmp")
+        do {
+            try? FileManager.default.removeItem(at: safeTemp)
+            try FileManager.default.moveItem(at: location, to: safeTemp)
+            onComplete(safeTemp, nil)
+        } catch {
+            onComplete(nil, error)
+        }
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
