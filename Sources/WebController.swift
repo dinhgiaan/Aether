@@ -92,7 +92,12 @@ final class WebController: NSObject, ObservableObject {
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1"
         let id = "AetherBlocklist-v\(version)"
         // Nếu đã compile rồi thì dùng luôn — tránh compile lại mỗi lần app khởi động
-        if let cached = try? await store.lookUpContentRuleList(forIdentifier: id) {
+        let cached: WKContentRuleList? = await withCheckedContinuation { continuation in
+            store.lookUpContentRuleList(forIdentifier: id) { list, _ in
+                continuation.resume(returning: list)
+            }
+        }
+        if let cached {
             contentController.add(cached)
             return
         }
