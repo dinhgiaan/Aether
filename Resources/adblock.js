@@ -286,6 +286,27 @@
     document.addEventListener(type, (e) => e.stopImmediatePropagation(), true);
   }
 
+  // Chống YouTube script tự động pause video khi vào PiP hoặc đổi mode
+  const origPause = HTMLMediaElement.prototype.pause;
+  HTMLMediaElement.prototype.pause = function (...args) {
+    if (this.webkitPresentationMode === 'picture-in-picture' || window.__aeInPiP) {
+      return;
+    }
+    return origPause.apply(this, args);
+  };
+
+  document.addEventListener('webkitpresentationmodechanged', (e) => {
+    const v = e.target;
+    if (v instanceof HTMLVideoElement) {
+      if (v.webkitPresentationMode === 'picture-in-picture') {
+        window.__aeInPiP = true;
+        if (v.paused) v.play().catch(() => {});
+      } else {
+        window.__aeInPiP = false;
+      }
+    }
+  }, true);
+
   const currentVideo = () =>
     document.querySelector('.html5-video-player video') || document.querySelector('video');
 

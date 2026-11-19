@@ -145,13 +145,56 @@ final class WebController: NSObject, ObservableObject {
     }
 
     func togglePiP() {
-        // Thực thi trong .page world để truy cập trực tiếp window.__aeMedia và HTMLVideoElement
-        run("window.__aeMedia && window.__aeMedia.togglePiP()")
+        let js = """
+        (() => {
+          const v = document.querySelector('.html5-video-player video, video');
+          if (!v) return;
+          if (v.paused) { v.play().catch(() => {}); }
+          if (v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
+            const isPiP = v.webkitPresentationMode === 'picture-in-picture';
+            const next = isPiP ? 'inline' : 'picture-in-picture';
+            window.__aeInPiP = (next === 'picture-in-picture');
+            v.webkitSetPresentationMode(next);
+            setTimeout(() => { if (v.paused) v.play().catch(() => {}); }, 150);
+          } else if (v.requestPictureInPicture) {
+            if (document.pictureInPictureElement) {
+              document.exitPictureInPicture();
+            } else {
+              v.requestPictureInPicture();
+            }
+            setTimeout(() => { if (v.paused) v.play().catch(() => {}); }, 150);
+          }
+        })();
+        """
+        run(js)
+    }
+    
+    func handleSwipeDown() {
+        // Vuốt video xuống: thu nhỏ video thành PiP nổi tiếp tục phát không bị tắt, sau đó lùi về trang trước mượt mà
+        let js = """
+        (() => {
+          const v = document.querySelector('.html5-video-player video, video');
+          if (v) {
+            window.__aeInPiP = true;
+            if (v.paused) { v.play().catch(() => {}); }
+            if (v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
+              v.webkitSetPresentationMode('picture-in-picture');
+            }
+          }
+          setTimeout(() => {
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              window.location.href = '/';
+            }
+          }, 80);
+        })();
+        """
+        run(js)
     }
     
     func goBackToHome() {
-        // Tự động thu nhỏ video thành PiP trước để video tiếp tục phát không bị tắt, sau đó lùi về trang trước mượt mà
-        run("if (window.__aeMedia && window.__aeMedia.togglePiP) { window.__aeMedia.togglePiP(); } if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }")
+        handleSwipeDown()
     }
     
     func requestDownload(explicitId: String? = nil) {

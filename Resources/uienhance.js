@@ -459,45 +459,6 @@
     actionBar.insertBefore(btn, actionBar.firstChild);
   };
 
-  // ── 5. Vuốt video xuống để thu nhỏ PiP / quay về trang trước không bị ngắt ─
-  let startY = 0;
-  let startX = 0;
-  let isVideoTouch = false;
-
-  window.addEventListener('touchstart', (e) => {
-    if (!location.pathname.startsWith('/watch')) return;
-    if (e.touches.length === 1) {
-      const t = e.target;
-      if (t && t.closest('.html5-video-player, #player-container-id, video, .player-control-overlay, .ytm-video-player-container')) {
-        isVideoTouch = true;
-        startY = e.touches[0].clientY;
-        startX = e.touches[0].clientX;
-      } else {
-        isVideoTouch = false;
-      }
-    }
-  }, { capture: true, passive: true });
-
-  window.addEventListener('touchend', (e) => {
-    if (!isVideoTouch || e.changedTouches.length !== 1) return;
-    const deltaY = e.changedTouches[0].clientY - startY;
-    const deltaX = Math.abs(e.changedTouches[0].clientX - startX);
-    if (deltaY > 55 && deltaX < 45) {
-      // Kích hoạt PiP trước để video tiếp tục phát nổi không bị tắt
-      try {
-        if (window.__aeMedia && window.__aeMedia.togglePiP) {
-          window.__aeMedia.togglePiP();
-        }
-      } catch (_) {}
-      if (window.history.length > 1) {
-        window.history.back();
-      } else {
-        window.location.href = '/';
-      }
-    }
-    isVideoTouch = false;
-  }, { capture: true, passive: true });
-
   // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
   document.addEventListener('DOMContentLoaded', () => {
     let prev = 0;
