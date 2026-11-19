@@ -4,16 +4,8 @@ import MediaPlayer
 
 enum Config {
     static let home = URL(string: "https://m.youtube.com/")!
-    // UA: OS token freeze theo chuẩn iOS 26+ (Apple freeze tại 18_6), Version khớp Safari iOS 26
-    static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
-    // Allowlist domain: "google.com" đã bao gồm accounts.google.com, mail.google.com, v.v.
-    static let allowedHostSuffixes = [
-        "youtube.com", "youtu.be",
-        "google.com",
-        "googleapis.com",
-        "googleusercontent.com",
-        "gstatic.com",
-    ]
+    // UA Safari chuẩn quốc tế tương thích 100% với Google & YouTube (không bị nhận nhầm bot / version lỗi)
+    static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 }
 
 struct StreamOption: Identifiable, Codable {
@@ -101,10 +93,8 @@ final class WebController: NSObject, ObservableObject {
         
         setupRemoteCommands()
         
-        // Timer dự phòng tối đa 0.8s để tắt splash screen bất kể mạng nhanh hay chậm
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.dismissSplash()
-        }
+        // Tải YouTube ngay lập tức khi khởi tạo WebController
+        start()
     }
 
     deinit {
@@ -334,37 +324,96 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
     }
 }
 
-// MARK: - Điều hướng
+// MARK: - Điều hướng & Xử lý WebKit
 extension WebController: WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // Frame con (iframe, player) luôn cho qua
-        guard navigationAction.targetFrame?.isMainFrame ?? true,
-              let url = navigationAction.request.url else {
-            decisionHandler(.allow); return
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
         }
-        let scheme = url.scheme?.lowercased() ?? ""
-        // about/blob/data/javascript là scheme nội bộ hoặc link hành động trang, luôn cho qua
-        if ["about", "blob", "data", "javascript"].contains(scheme) { decisionHandler(.allow); return }
 
-        // Chặn deep link (vnd.youtube://, intent://...) để không bị đẩy sang app YouTube thật
-        // Bao gồm sau khi login Gmail xong YouTube redirect về via custom scheme
-        guard scheme == "http" || scheme == "https" else { decisionHandler(.cancel); return }
+        let scheme = url.scheme?.lowercased() ?? ""
+        if ["about", "blob", "data", "javascript"].contains(scheme) {
+            decisionHandler(.allow)
+            return
+        }
+
+        // Chặn deep link ứng dụng ngoài (vnd.youtube://, intent://...)
+        guard scheme == "http" || scheme == "https" else {
+            decisionHandler(.cancel)
+            return
+        }
+
+        // Cho phép toàn bộ tài nguyên trong frame con (player, analytics, assets)
+        if !(navigationAction.targetFrame?.isMainFrame ?? true) {
+            decisionHandler(.allow)
+            return
+        }
 
         let host = url.host?.lowercased() ?? ""
-        let allowed = Config.allowedHostSuffixes.contains { host == $0 || host.hasSuffix("." + $0) }
-        if allowed {
+        // Các domain hợp lệ của YouTube, Google và CDN dịch vụ
+        let isInternal = host.contains("youtube.") ||
+                         host.contains("youtu.be") ||
+                         host.contains("google.") ||
+                         host.contains("gstatic.") ||
+                         host.contains("ggpht.") ||
+                         host.contains("googlevideo.") ||
+                         host.contains("ytimg.") ||
+                         host.isEmpty
+
+        if isInternal {
             decisionHandler(.allow)
         } else {
-            UIApplication.shared.open(url) // link ngoài mở bằng Safari
-            decisionHandler(.cancel)
+            // Chỉ mở Safari ngoài khi người dùng CHỦ ĐỘNG click vào 1 liên kết ngoài trang
+            if navigationAction.navigationType == .linkActivated {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+            } else {
+                decisionHandler(.allow)
+            }
         }
     }
 
-    // Splash ẩn khi trang đầu tiên load xong thành công
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         dismissSplash()
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        NSLog("Aether: WebContent process terminated, tự động nạp lại...")
+        webView.reload()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        dismissSplash()
+        showErrorPageIfNeeded(error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        dismissSplash()
+        showErrorPageIfNeeded(error: error)
+    }
+
+    private func showErrorPageIfNeeded(error: Error) {
+        let nsErr = error as NSError
+        guard nsErr.domain != NSURLErrorDomain || nsErr.code != NSURLErrorCancelled else { return }
+        let html = """
+        <html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
+        <style>body{background:#0a0a0d;color:#aaa;font-family:-apple-system,sans-serif;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        height:100vh;margin:0;gap:16px;text-align:center;padding:24px}
+        h2{color:#fff;margin:0;font-size:20px}
+        p{color:#888;font-size:14px;max-width:320px;margin:0;line-height:1.4}
+        button{background:#ff2442;color:#fff;border:none;border-radius:24px;
+        padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer}</style></head>
+        <body>
+        <h2>Không thể tải YouTube</h2>
+        <p>\(nsErr.localizedDescription)</p>
+        <button onclick='location.href="https://m.youtube.com/"'>Thử lại</button>
+        </body></html>
+        """
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
     // Link target=_blank: load ngay trong webview nếu domain được phép, nếu không mở Safari
@@ -377,34 +426,12 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
         let scheme = url.scheme?.lowercased() ?? ""
         guard scheme == "http" || scheme == "https" else { return nil }
         let host = url.host?.lowercased() ?? ""
-        let allowed = Config.allowedHostSuffixes.contains { host == $0 || host.hasSuffix("." + $0) }
-        if allowed {
+        let isInternal = host.contains("youtube.") || host.contains("google.") || host.contains("youtu.be")
+        if isInternal {
             webView.load(navigationAction.request)
         } else {
             UIApplication.shared.open(url)
         }
         return nil
-    }
-
-    // Hiện trang lỗi thân thiện khi mất mạng / server không phản hồi
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        dismissSplash()
-        let nsErr = error as NSError
-        // Bỏ qua lỗi "bị cancel" do chính app cancel (ví dụ chặn deep link)
-        guard nsErr.domain != NSURLErrorDomain || nsErr.code != NSURLErrorCancelled else { return }
-        let html = """
-        <html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
-        <style>body{background:#0f0f0f;color:#aaa;font-family:-apple-system,sans-serif;
-        display:flex;flex-direction:column;align-items:center;justify-content:center;
-        height:100vh;margin:0;gap:12px}
-        h2{color:#fff;margin:0}button{background:#ff0000;color:#fff;border:none;
-        border-radius:20px;padding:10px 24px;font-size:16px;cursor:pointer}</style></head>
-        <body>
-        <h2>Không thể tải trang</h2>
-        <p>\(nsErr.localizedDescription)</p>
-        <button onclick='location.reload()'>Thử lại</button>
-        </body></html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
     }
 }
