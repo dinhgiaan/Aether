@@ -10,12 +10,8 @@ struct ContentView: View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
 
-            WebViewContainer(webView: web.webView, onSwipeDown: {
-                if web.isWatching {
-                    Haptic.feedback(.medium)
-                    web.handleSwipeDown()
-                }
-            })
+            // Cử chỉ vuốt xuống từ video được xử lý trong JS (uienhance.js) để có user gesture khi bật PiP
+            WebViewContainer(webView: web.webView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 
@@ -467,45 +463,12 @@ private struct NetflixSplashView: View {
     }
 }
 
-// MARK: – WKWebView wrapper với bộ nhận diện vuốt xuống Native 120Hz
+// MARK: – WKWebView wrapper
 struct WebViewContainer: UIViewRepresentable {
     let webView: WKWebView
-    let onSwipeDown: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onSwipeDown: onSwipeDown)
-    }
-
-    func makeUIView(context: Context) -> WKWebView {
-        let swipe = UISwipeGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSwipe))
-        swipe.direction = .down
-        swipe.delegate = context.coordinator
-        webView.addGestureRecognizer(swipe)
-        return webView
-    }
-
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        context.coordinator.onSwipeDown = onSwipeDown
-    }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onSwipeDown: () -> Void
-        init(onSwipeDown: @escaping () -> Void) {
-            self.onSwipeDown = onSwipeDown
-        }
-
-        @objc func handleSwipe(_ gesture: UISwipeGestureRecognizer) {
-            guard let wv = gesture.view as? WKWebView else { return }
-            // Kích hoạt khi người dùng đang ở phần đầu video
-            if wv.scrollView.contentOffset.y <= 25 {
-                onSwipeDown()
-            }
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            return true
-        }
-    }
+    func makeUIView(context: Context) -> WKWebView { webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 // MARK: – Haptic Feedback Helper

@@ -174,47 +174,13 @@ final class WebController: NSObject, ObservableObject {
         run(js)
     }
     
+    /// Thu nhỏ video: bật PiP → giữ video sống → về trang trước.
+    /// Logic nằm trong JS (__aeMedia.minimize). Gọi từ Swift không có user gesture nên WebKit có thể
+    /// từ chối PiP (JS sẽ hiện toast); cử chỉ vuốt thật chạy trong touchend ở uienhance.js.
     func handleSwipeDown() {
-        // Vuốt video xuống: thu nhỏ video thành PiP nổi tiếp tục phát không bị tắt và lùi về trang trước / trang chủ
-        let js = """
-        (() => {
-          const v = document.querySelector('.html5-video-player video, video');
-          if (v && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
-            if (v.paused) { v.play().catch(() => {}); }
-            v.webkitSetPresentationMode('picture-in-picture');
-            
-            // Giữ <video> sống trong document.documentElement để WebKit không đóng PiP khi lùi trang
-            if (v.parentNode !== document.documentElement) {
-              v.style.position = 'fixed';
-              v.style.bottom = '0';
-              v.style.right = '0';
-              v.style.width = '160px';
-              v.style.height = '90px';
-              v.style.opacity = '0.01';
-              v.style.pointerEvents = 'none';
-              v.style.zIndex = '-999';
-              document.documentElement.appendChild(v);
-            }
-            
-            setTimeout(() => {
-              if (window.history.length > 1) {
-                window.history.back();
-              } else {
-                window.location.href = '/';
-              }
-            }, 300);
-          } else {
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              window.location.href = '/';
-            }
-          }
-        })();
-        """
-        run(js)
+        run("window.__aeMedia && window.__aeMedia.minimize && window.__aeMedia.minimize();")
     }
-    
+
     func goBackToHome() {
         handleSwipeDown()
     }
