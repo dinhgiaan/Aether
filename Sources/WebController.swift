@@ -40,7 +40,13 @@ final class WebController: NSObject, ObservableObject {
     @Published var showDownloadSheet = false
     @Published var showOfflineLibrary = false
     
-    let webView: WKWebView
+    /// WebView đang hiển thị. Đổi khi thu nhỏ PiP (webViewID đổi theo để SwiftUI nạp lại)
+    private(set) var webView: WKWebView
+    @Published private(set) var webViewID = UUID()
+    /// WebView đang giữ trang /watch ở chế độ PiP (ẩn phía sau giao diện). nil nếu không có
+    private(set) var parkedWebView: WKWebView?
+    private var lastBrowseURL: URL = Config.home
+    private let configuration: WKWebViewConfiguration
     private let contentController = WKUserContentController()
     private var urlObservation: NSKeyValueObservation?
 
@@ -66,6 +72,7 @@ final class WebController: NSObject, ObservableObject {
             )
         }
 
+        configuration = config
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
 
@@ -76,20 +83,8 @@ final class WebController: NSObject, ObservableObject {
         contentController.add(proxy, name: "downloadData")
         contentController.add(proxy, name: "aetherNav")
 
-        webView.customUserAgent = Config.userAgent
-        webView.allowsBackForwardNavigationGestures = true
-        webView.isOpaque = true
-        webView.backgroundColor = .black
-        webView.scrollView.backgroundColor = .black
-        // Fix: safe-area trên trang login bị trắng — để WKWebView tự quản lý inset
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-
-        // YouTube là SPA: URL đổi bằng pushState nên theo dõi bằng KVO
-        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
-            Task { @MainActor in self?.updateWatching() }
-        }
+        configure(webView)
+        observeURL()
 
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(willResign), name: UIApplication.willResignActiveNotification, object: nil)
@@ -100,6 +95,101 @@ final class WebController: NSObject, ObservableObject {
         
         // Tải YouTube ngay lập tức khi khởi tạo WebController
         start()
+    }
+
+    // MARK: - Quản lý WebView (hiển thị / parked cho PiP)
+    private func makeWebView() -> WKWebView {
+        // Dùng chung configuration (cookie, user scripts, blocklist) → vẫn đăng nhập sẵn
+        let wv = WKWebView(frame: .zero, configuration: configuration)
+        configure(wv)
+        return wv
+    }
+
+    private func configure(_ wv: WKWebView) {
+        wv.customUserAgent = Config.userAgent
+        wv.allowsBackForwardNavigationGestures = true
+        wv.isOpaque = true
+        wv.backgroundColor = .black
+        wv.scrollView.backgroundColor = .black
+        // Fix: safe-area trên trang login bị trắng — để WKWebView tự quản lý inset
+        wv.scrollView.contentInsetAdjustmentBehavior = .automatic
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+    }
+
+    // YouTube là SPA: URL đổi bằng pushState nên theo dõi bằng KVO (gắn lại mỗi khi đổi WebView)
+    private func observeURL() {
+        urlObservation?.invalidate()
+        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in self?.updateWatching() }
+        }
+    }
+
+    /// WebView dùng cho lệnh media (Lock Screen, nền): ưu tiên trang đang PiP
+    private var mediaWebView: WKWebView { parkedWebView ?? webView }
+
+    func runMedia(_ js: String) {
+        mediaWebView.evaluateJavaScript(js, in: nil, in: .page, completionHandler: nil)
+    }
+
+    /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch trong WebView ẩn, mở trang trước đó ở WebView mới.
+    /// Không đụng vào DOM của <video> nên PiP không bị mất hình.
+    func parkCurrentForPiP() {
+        guard parkedWebView == nil, isWatching else { return }
+        let parked = webView
+        parkedWebView = parked
+        webView = makeWebView()
+        webViewID = UUID()
+        observeURL()
+        isWatching = false
+        webView.load(URLRequest(url: lastBrowseURL))
+
+        // Đợi SwiftUI gỡ WebView cũ khỏi cây view rồi mới gắn vào window (ẩn dưới giao diện)
+        Task { @MainActor [weak self, weak parked] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let self, let parked, self.parkedWebView === parked else { return }
+            self.attachBehindUI(parked)
+        }
+    }
+
+    private func attachBehindUI(_ wv: WKWebView) {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+        guard let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first else { return }
+        wv.removeFromSuperview()
+        wv.frame = window.bounds
+        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        wv.isUserInteractionEnabled = false
+        window.insertSubview(wv, at: 0)   // nằm dưới giao diện SwiftUI, vẫn "sống" để PiP chạy
+    }
+
+    /// Nút "quay lại app" của cửa sổ PiP: hoán đổi WebView đang PiP về lại màn hình chính
+    func restoreParked() {
+        guard let parked = parkedWebView else { return }
+        let old = webView
+        parkedWebView = nil
+        parked.removeFromSuperview()
+        parked.isUserInteractionEnabled = true
+        webView = parked
+        webViewID = UUID()
+        observeURL()
+        updateWatching()
+        old.stopLoading()
+        old.navigationDelegate = nil
+        old.uiDelegate = nil
+        old.removeFromSuperview()
+    }
+
+    /// Đóng PiP (nút X, hoặc mở video mới): dừng và huỷ WebView đang giữ
+    func destroyParked() {
+        guard let parked = parkedWebView else { return }
+        parkedWebView = nil
+        parked.stopLoading()
+        parked.navigationDelegate = nil
+        parked.uiDelegate = nil
+        parked.removeFromSuperview()
+        parked.loadHTMLString("", baseURL: nil)   // ngắt media chắc chắn
     }
 
     deinit {
@@ -348,16 +438,22 @@ final class WebController: NSObject, ObservableObject {
     }
 
     private func updateWatching() {
-        let path = webView.url?.path ?? ""
+        let url = webView.url
+        let path = url?.path ?? ""
         // Shorts bị ẩn trên UI — không cần PiP cho /shorts
         isWatching = path.hasPrefix("/watch")
+        if isWatching {
+            destroyParked()   // mở video mới → đóng PiP cũ
+        } else if let url, (url.host ?? "").contains("youtube.") {
+            lastBrowseURL = url   // nhớ trang trước khi vào video để quay về đúng chỗ
+        }
     }
 
     // MARK: - Giữ phát nền & Lock screen
-    @objc private func willResign() { run("window.__aeMedia && window.__aeMedia.remember()") }
+    @objc private func willResign() { runMedia("window.__aeMedia && window.__aeMedia.remember()") }
     @objc private func didBackground() {
         // Tự động kích hoạt PiP khi ra ngoài app nếu đang xem video
-        run("""
+        runMedia("""
         (() => {
           const v = document.querySelector('.html5-video-player video, video');
           if (v && !v.paused && v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture')) {
@@ -367,7 +463,7 @@ final class WebController: NSObject, ObservableObject {
         })();
         """)
     }
-    @objc private func willForeground() { run("window.__aeMedia && window.__aeMedia.enterForeground()") }
+    @objc private func willForeground() { runMedia("window.__aeMedia && window.__aeMedia.enterForeground()") }
 
     func run(_ js: String) {
         // Luôn chạy trong .page content world nơi code JavaScript nhúng tồn tại
@@ -391,40 +487,40 @@ final class WebController: NSObject, ObservableObject {
         
         rcc.playCommand.isEnabled = true
         rcc.playCommand.addTarget { [weak self] _ in
-            self?.run("window.__aeMedia && window.__aeMedia.resume()")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.resume()")
             return .success
         }
         
         rcc.pauseCommand.isEnabled = true
         rcc.pauseCommand.addTarget { [weak self] _ in
-            self?.run("window.__aeMedia && window.__aeMedia.pause()")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.pause()")
             return .success
         }
         
         rcc.togglePlayPauseCommand.isEnabled = true
         rcc.togglePlayPauseCommand.addTarget { [weak self] _ in
-            self?.run("window.__aeMedia && window.__aeMedia.togglePlay()")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.togglePlay()")
             return .success
         }
         
         rcc.changePlaybackPositionCommand.isEnabled = true
         rcc.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let posEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self?.run("window.__aeMedia && window.__aeMedia.seek(\(posEvent.positionTime))")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.seek(\(posEvent.positionTime))")
             return .success
         }
         
         rcc.skipForwardCommand.isEnabled = true
         rcc.skipForwardCommand.preferredIntervals = [10]
         rcc.skipForwardCommand.addTarget { [weak self] _ in
-            self?.run("window.__aeMedia && window.__aeMedia.skip(10)")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.skip(10)")
             return .success
         }
         
         rcc.skipBackwardCommand.isEnabled = true
         rcc.skipBackwardCommand.preferredIntervals = [10]
         rcc.skipBackwardCommand.addTarget { [weak self] _ in
-            self?.run("window.__aeMedia && window.__aeMedia.skip(-10)")
+            self?.runMedia("window.__aeMedia && window.__aeMedia.skip(-10)")
             return .success
         }
     }
@@ -517,11 +613,21 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                 }
             case "aetherNav":
                 if let dict = message.body as? [String: Any] {
-                    if let watching = dict["isWatching"] as? Bool {
+                    let fromVisible = message.webView === target.webView
+                    let fromParked = message.webView != nil && message.webView === target.parkedWebView
+                    // Trạng thái xem chỉ lấy từ WebView đang hiển thị (bỏ qua trang đang PiP ở nền)
+                    if let watching = dict["isWatching"] as? Bool, fromVisible {
                         target.isWatching = watching
                     }
                     if let action = dict["action"] as? String {
-                        if action == "openDownloads" {
+                        if action == "minimizeToPiP" {
+                            if fromVisible { target.parkCurrentForPiP() }
+                        } else if action == "pipEnded" {
+                            if fromParked {
+                                if (dict["restore"] as? Bool) == true { target.restoreParked() }
+                                else { target.destroyParked() }
+                            }
+                        } else if action == "openDownloads" {
                             target.showOfflineLibrary = true
                         } else if action == "requestDownload" {
                             let vid = dict["videoId"] as? String
@@ -597,6 +703,7 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView === parkedWebView { destroyParked(); return }
         NSLog("Aether: WebContent process terminated, tự động nạp lại...")
         webView.reload()
     }

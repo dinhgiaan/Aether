@@ -12,6 +12,7 @@ struct ContentView: View {
 
             // Cử chỉ vuốt xuống từ video được xử lý trong JS (uienhance.js) để có user gesture khi bật PiP
             WebViewContainer(webView: web.webView)
+                .id(web.webViewID)   // đổi WebView khi thu nhỏ PiP / quay lại từ PiP
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 

@@ -281,7 +281,7 @@
           card.addEventListener('click', () => {
             try {
               window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
-            } catch (_) {}
+            } catch (_) { }
           });
           if (historyShelf && historyShelf.nextSibling) {
             historyShelf.parentNode.insertBefore(card, historyShelf.nextSibling);
@@ -326,7 +326,7 @@
       setTimeout(() => { tab.style.transform = ''; }, 160);
       try {
         window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
-      } catch (_) {}
+      } catch (_) { }
     });
 
     // Chèn trước tab Hồ sơ
@@ -505,7 +505,7 @@
     setter.call(input, text + ' ');
     input.dispatchEvent(new Event('input', { bubbles: true }));   // để YouTube tải gợi ý mới
     input.focus();
-    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) {}
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) { }
   };
 
   const showRemoveSheet = (query, onConfirm) => {
@@ -617,7 +617,7 @@
         reset(s.el, true);
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
-        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) {}
+        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { }
       } else {
         reset(s.el, true);
       }
@@ -668,7 +668,7 @@
 
     try {
       window.webkit?.messageHandlers?.aetherReady?.postMessage('ready');
-    } catch (_) {}
+    } catch (_) { }
 
     refreshUI();
 
@@ -706,14 +706,5 @@
       const tab = e.target.closest('ytm-pivot-bar-item-renderer, .ae-dl-tab');
       if (tab) tab.style.transform = '';
     }, { passive: true });
-
-    // Tự động đóng PiP cũ và dọn video detached khi người dùng bấm xem video mới trong ứng dụng
-    document.addEventListener('click', (e) => {
-      const a = e.target.closest('a[href*="/watch"], a[href*="watch?v="]');
-      if (a) {
-        // Mở video mới → nhả video đang giữ ở PiP (nếu có)
-        try { window.__aeMedia && window.__aeMedia.releaseHeld(false); } catch (_) {}
-      }
-    }, true);
   }, { once: true });
 })();

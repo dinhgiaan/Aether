@@ -120,13 +120,15 @@
     if (!adInterval) adInterval = setInterval(tickAdSkipper, 300);
   };
 
-  // ---- 2a. PiP-hold: giữ <video> đang ở PiP sống sót khi YouTube SPA rời trang /watch ----
-  // held: { v, vid, parent, next, entered, left, releasing }
-  let held = null;
+  // ---- 2a. Tiện ích PiP: toast, pause native, chờ PiP bật ----
+  // Kiến trúc mới: KHÔNG đụng vào DOM của <video> đang PiP. Swift giữ nguyên trang /watch trong
+  // một WKWebView ẩn ("parked") và mở trang chủ ở WebView mới, nên PiP không bao giờ mất hình.
   const nativePause = (v) => { try { HTMLMediaElement.prototype.pause.call(v); } catch (_) { } };
   const videoIdOf = () => (location.search.match(/[?&]v=([^&]+)/) || [])[1] || '';
+  const postNav = (payload) => {
+    try { window.webkit?.messageHandlers?.aetherNav?.postMessage(payload); return true; } catch (_) { return false; }
+  };
 
-  // Toast nhỏ báo lỗi (PiP không bật được...)
   const toast = (msg) => {
     try {
       let el = document.getElementById('ae-toast');
@@ -141,60 +143,6 @@
       clearTimeout(el.__t);
       el.__t = setTimeout(() => { el.style.opacity = '0'; }, 2400);
     } catch (_) { }
-  };
-
-  // Chặn lệnh dọn dẹp của player YouTube (pause/load/xóa src) trên đúng <video> đang giữ
-  const guardVideo = (v) => {
-    const keep = () => held && held.v === v && !held.releasing;
-    v.pause = function () { if (keep()) return; nativePause(v); };
-    v.load = function () { if (keep()) return; return HTMLMediaElement.prototype.load.call(v); };
-    v.removeAttribute = function (name) {
-      if (keep() && String(name).toLowerCase() === 'src') return;
-      return Element.prototype.removeAttribute.apply(v, arguments);
-    };
-    v.remove = function () { if (keep()) return; return Element.prototype.remove.call(v); };
-    const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
-    if (d && d.set) {
-      Object.defineProperty(v, 'src', {
-        configurable: true,
-        get() { return d.get.call(v); },
-        set(x) { if (keep()) return; d.set.call(v, x); }
-      });
-    }
-  };
-  const unguardVideo = (v) => {
-    for (const k of ['pause', 'load', 'removeAttribute', 'remove', 'src']) {
-      try { delete v[k]; } catch (_) { }
-    }
-  };
-
-  // Chuyển <video> sang holder cố định ở <html> để không bị gỡ cùng container của trang /watch
-  const holdVideo = (v) => {
-    if (held && held.v === v) return;
-    releaseHeld(false);
-    held = { v, vid: videoIdOf(), parent: v.parentNode, next: v.nextSibling, entered: false, left: false, releasing: false };
-    guardVideo(v);
-    v.classList.add('ae-pip-held');
-    document.documentElement.appendChild(v);
-  };
-
-  // restore=true: trả video về chỗ cũ (dùng khi PiP thất bại); false: dừng và gỡ hẳn
-  const releaseHeld = (restore) => {
-    if (!held) return;
-    const h = held;
-    h.releasing = true;
-    held = null;
-    unguardVideo(h.v);
-    h.v.classList.remove('ae-pip-held');
-    try {
-      if (h.v.webkitPresentationMode === 'picture-in-picture') h.v.webkitSetPresentationMode('inline');
-    } catch (_) { }
-    if (restore && h.parent && h.parent.isConnected) {
-      h.parent.insertBefore(h.v, h.next && h.next.parentNode === h.parent ? h.next : null);
-    } else {
-      nativePause(h.v);
-      try { h.v.remove(); } catch (_) { }
-    }
   };
 
   const isPiP = (v) => v.webkitPresentationMode === 'picture-in-picture' || document.pictureInPictureElement === v;
@@ -212,18 +160,6 @@
     const isWatch = location.pathname.startsWith('/watch');
     document.body?.classList.toggle('ae-watching', isWatch);
     if (isWatch) {
-      // Mở video mới sau khi đã thu nhỏ PiP → bỏ video PiP cũ (chỉ khi đã rời trang /watch)
-      if (held && held.left) releaseHeld(false);
-      // Dọn video detached cũ (không động vào video đang được giữ ở PiP)
-      const detached = document.body?.querySelectorAll(':scope > video');
-      if (detached && detached.length > 0) {
-        detached.forEach(oldV => {
-          if (held && held.v === oldV) return;
-          if (oldV !== document.querySelector('.html5-video-player video')) {
-            try { oldV.pause(); oldV.remove(); } catch (_) { }
-          }
-        });
-      }
       startAdSkipper();
     }
     else if (adInterval) { clearInterval(adInterval); adInterval = null; }
@@ -319,15 +255,6 @@
       padding-top: 0 !important;
     }
 
-    /* Video đang giữ ở PiP: ẩn khỏi giao diện (stylesheet !important thắng style inline của YouTube) */
-    video.ae-pip-held {
-      position: fixed !important; right: 0 !important; bottom: 0 !important;
-      left: auto !important; top: auto !important;
-      width: 160px !important; height: 90px !important;
-      opacity: 0.01 !important; pointer-events: none !important;
-      z-index: -999 !important; transform: none !important;
-    }
-
     /* Tối ưu bình luận: thu nhỏ khoảng cách để xem được 4-5 comment cùng lúc */
     ytm-comment-thread-renderer, ytm-comment-renderer {
       padding: 3px 6px !important;
@@ -385,15 +312,13 @@
         if (v.paused) v.play().catch(() => { });
       } else {
         window.__aeInPiP = false;
-        // PiP kết thúc khi video đang được giữ: phân biệt nút X (video bị pause) và nút "quay lại app" (vẫn phát)
-        if (held && held.v === v && held.entered && !held.releasing) {
+        // Trang đang bị "parked" (ẩn) vì thu nhỏ PiP: báo Swift khi PiP kết thúc.
+        // Nút X → video bị pause → huỷ trang; nút "quay lại app" → video vẫn phát → hoán đổi về trang này.
+        if (window.__aeParked) {
           setTimeout(() => {
-            if (!held || held.v !== v) return;
-            const h = held;
-            const resume = !v.paused;
-            const t = Math.floor(v.currentTime || 0);
-            releaseHeld(false);
-            if (resume && h.vid) location.href = '/watch?v=' + h.vid + (t > 0 ? '&t=' + t + 's' : '');
+            if (!window.__aeParked || isPiP(v)) return;
+            window.__aeParked = false;
+            postNav({ action: 'pipEnded', restore: !v.paused });
           }, 350);
         }
       }
@@ -477,8 +402,7 @@
         syncNowPlaying();
       }
     },
-    releaseHeld(restore) { releaseHeld(!!restore); },
-    // Vuốt xuống từ video: bật PiP → giữ video sống → quay về trang trước.
+    // Vuốt xuống từ video: bật PiP rồi nhờ Swift "park" trang này và mở trang chủ ở WebView mới.
     // PHẢI được gọi trực tiếp trong touchend (user gesture), nếu không WebKit từ chối PiP.
     minimize() {
       const v = currentVideo();
@@ -493,13 +417,8 @@
 
       waitForPiP(v, 900).then((ok) => {
         if (!ok) { toast('Không bật được PiP, hãy thử lại'); return; }
-        holdVideo(v);
-        // Kiểm tra PiP còn sống sau khi chuyển DOM, rồi mới rời trang
-        setTimeout(() => {
-          if (!isPiP(v)) { releaseHeld(true); toast('Không giữ được PiP khi chuyển trang'); return; }
-          if (held && held.v === v) { held.entered = true; held.left = true; }
-          if (history.length > 1) history.back(); else location.href = '/';
-        }, 180);
+        window.__aeParked = true;
+        if (!postNav({ action: 'minimizeToPiP', vid: videoIdOf() })) window.__aeParked = false;
       });
       return 'pending';
     },
