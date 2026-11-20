@@ -8,6 +8,9 @@ struct InnerTubeClient {
     let userAgent: String       // PHẢI dùng lại đúng UA này khi tải stream do client này sinh ra
     let context: [String: Any]  // phần "client" trong context của payload
 
+    /// Client mà link https trực tiếp cần GVS PO Token (sẽ 403) -> chỉ dùng HLS của client đó
+    var hlsOnly: Bool { name == "IOS" || name == "WEB" }
+
     /// ANDROID_VR: hiện KHÔNG yêu cầu GVS PO Token nên là lựa chọn ưu tiên
     static let androidVR: InnerTubeClient = {
         let version = "1.61.48"
@@ -51,8 +54,32 @@ struct InnerTubeClient {
         )
     }()
 
-    /// Thứ tự thử: ANDROID_VR trước, IOS sau
-    static let all: [InnerTubeClient] = [.androidVR, .ios]
+    /// WEB_SAFARI (yt-dlp): UA Safari desktop -> InnerTube trả hlsManifestUrl (m3u8).
+    /// Theo PO Token Guide của yt-dlp, HLS của client này hiện KHÔNG cần GVS PO Token.
+    /// Lưu ý: version dạng ngày, cần cập nhật theo yt-dlp nếu YouTube từ chối.
+    static let webSafari: InnerTubeClient = {
+        let version = "2.20250925.01.00"
+        let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15"
+        return InnerTubeClient(
+            name: "WEB",
+            version: version,
+            clientId: "1",
+            userAgent: ua,
+            context: [
+                "clientName": "WEB",
+                "clientVersion": version,
+                "userAgent": ua,
+                "osName": "Macintosh",
+                "osVersion": "10_15_7",
+                "platform": "DESKTOP",
+                "hl": "en",
+                "gl": "US"
+            ]
+        )
+    }()
+
+    /// Thứ tự thử: ANDROID_VR (link trực tiếp) -> WEB_SAFARI (HLS) -> IOS (dự phòng, dễ 403 sau ~10MB)
+    static let all: [InnerTubeClient] = [.androidVR, .webSafari, .ios]
 }
 
 /// Ghi lại họ địa chỉ IP (v4/v6) mà một request thực sự dùng.
@@ -129,6 +156,9 @@ struct YouTubeStreamResolver {
         request.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(client.clientId, forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue(client.version, forHTTPHeaderField: "X-YouTube-Client-Version")
+        if client.name == "WEB" {
+            request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
+        }
 
         let payload: [String: Any] = [
             "videoId": videoId,
@@ -234,7 +264,7 @@ struct YouTubeStreamResolver {
 
             // 4. HLS: không cần GVS PO Token. Client IOS có link trực tiếp luôn bị 403 -> thay bằng HLS;
             //    client khác chỉ dùng HLS khi không có link trực tiếp nào.
-            if client.name == InnerTubeClient.ios.name || options.isEmpty,
+            if client.hlsOnly || options.isEmpty,
                let hlsString = streamingData["hlsManifestUrl"] as? String,
                let hlsURL = URL(string: hlsString) {
                 do {
@@ -261,13 +291,13 @@ struct YouTubeStreamResolver {
                     }
                     if !hlsOptions.isEmpty {
                         ResolveLog.add("\(client.name):hls=\(hlsOptions.count)")
-                        // IOS: bỏ link trực tiếp vì chắc chắn 403
-                        options = (client.name == InnerTubeClient.ios.name) ? hlsOptions : options + hlsOptions
+                        // IOS/WEB: bỏ link trực tiếp vì cần PO Token (sẽ 403)
+                        options = client.hlsOnly ? hlsOptions : options + hlsOptions
                     }
                 } catch {
                     ResolveLog.add("\(client.name):hlsErr=\(error.localizedDescription)")
                 }
-            } else if client.name == InnerTubeClient.ios.name {
+            } else if client.hlsOnly {
                 ResolveLog.add("\(client.name):noHlsManifest")
             }
 
