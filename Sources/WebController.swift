@@ -47,9 +47,9 @@ final class WebController: NSObject, ObservableObject {
     private(set) var webView: WKWebView
     /// WebView đang giữ trang /watch ở chế độ PiP (nằm phía sau giao diện, vẫn "sống"). nil nếu không có
     private(set) var parkedWebView: WKWebView?
-    /// WebView trang duyệt (trang chủ…) nạp sẵn trong lúc xem video, để vuốt xuống là hiện ngay
-    private var spareWebView: WKWebView?
-    private var spareTask: Task<Void, Never>?
+    /// WebView duyệt (trang chủ, tìm kiếm…) – KHÔNG bao giờ bị thay khi mở video, nên feed + vị trí cuộn được giữ nguyên.
+    /// Video mở ở một WebView riêng (nằm trên); vuốt xuống chỉ việc hiện lại WebView này.
+    private var browseWebView: WKWebView!
     private var lastBrowseURL: URL = Config.home
     private let configuration: WKWebViewConfiguration
     private let contentController = WKUserContentController()
@@ -88,6 +88,7 @@ final class WebController: NSObject, ObservableObject {
         contentController.add(proxy, name: "downloadData")
         contentController.add(proxy, name: "aetherNav")
 
+        browseWebView = webView
         configure(webView)
         hostView.install(webView)
         observeURL()
@@ -103,7 +104,7 @@ final class WebController: NSObject, ObservableObject {
         start()
     }
 
-    // MARK: - Quản lý WebView (hiển thị / parked cho PiP / spare)
+    // MARK: - Quản lý WebView (duyệt / video / parked cho PiP)
     private func makeWebView() -> WKWebView {
         // Dùng chung configuration (cookie, user scripts, blocklist) → vẫn đăng nhập sẵn
         let wv = WKWebView(frame: .zero, configuration: configuration)
@@ -147,70 +148,55 @@ final class WebController: NSObject, ObservableObject {
         if silenceMedia { wv.loadHTMLString("", baseURL: nil) }   // ngắt media chắc chắn
     }
 
-    // MARK: Spare WebView (trang duyệt nạp sẵn)
+    // MARK: Mở video ở WebView riêng
 
-    /// Nạp sẵn trang trước đó trong nền khi bắt đầu xem video. Trễ một chút để không tranh băng thông với player.
-    private func scheduleSpare() {
-        guard spareWebView == nil, parkedWebView == nil, spareTask == nil else { return }
-        spareTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            guard let self, !Task.isCancelled else { return }
-            self.spareTask = nil
-            guard self.isWatching, self.parkedWebView == nil, self.spareWebView == nil else { return }
-            let spare = self.makeWebView()
-            self.hostView.install(spare, behind: true)
-            spare.load(URLRequest(url: self.lastBrowseURL))
-            self.spareWebView = spare
+    /// Bấm video ở trang duyệt: mở ở WebView mới phía trên, WebView duyệt giữ nguyên (feed + vị trí cuộn).
+    /// Root cause của lỗi "video vừa chọn biến mất khỏi trang chủ": trước đây vuốt xuống là nạp lại trang chủ ở WebView
+    /// mới → YouTube trả feed khác. Giờ trang chủ chính là WebView cũ nên không đổi gì.
+    func openWatch(_ url: URL) {
+        destroyParked()   // mở video mới → đóng PiP cũ
+        guard webView === browseWebView else {
+            webView.load(URLRequest(url: url))   // đang ở WebView video rồi → điều hướng tại chỗ
+            return
         }
+        let watch = makeWebView()
+        hostView.install(watch)
+        watch.load(URLRequest(url: url))
+        webView = watch
+        observeURL()
+        isWatching = true
+        hostView.present(watch, sending: browseWebView, showCover: true)
     }
 
-    private func discardSpare() {
-        spareTask?.cancel()
-        spareTask = nil
-        guard let spare = spareWebView else { return }
-        spareWebView = nil
-        tearDown(spare, silenceMedia: true)
-    }
-
-    /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch trong WebView phía sau, đưa trang duyệt lên trước.
-    /// Không đụng vào DOM của <video> nên PiP không bị mất hình, và không tạo/gỡ view nào nên không nháy.
+    /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch ở WebView phía sau, hiện lại WebView duyệt.
+    /// Không đụng vào DOM của <video> nên PiP không mất hình, và không tạo/gỡ view nào nên không nháy.
     func parkCurrentForPiP() {
         guard parkedWebView == nil, isWatching else { return }
-        spareTask?.cancel()
-        spareTask = nil
-
         let parked = webView
-        let incoming: WKWebView
-        let needsCover: Bool
-        if let spare = spareWebView {
-            incoming = spare            // đã nạp sẵn → hiện ngay, giữ cả vị trí cuộn
-            spareWebView = nil
-            needsCover = false
-        } else {
-            incoming = makeWebView()    // chưa kịp nạp sẵn → tạo mới, che bằng lớp loading
-            hostView.install(incoming, behind: true)
-            incoming.load(URLRequest(url: lastBrowseURL))
+        var needsCover = false
+        if parked === browseWebView {
+            // Dự phòng: video đã mở tại chỗ trong chính WebView duyệt → phải dựng WebView duyệt mới
+            let fresh = makeWebView()
+            hostView.install(fresh, behind: true)
+            fresh.load(URLRequest(url: lastBrowseURL))
+            browseWebView = fresh
             needsCover = true
         }
-
         parkedWebView = parked
-        webView = incoming
+        webView = browseWebView
         observeURL()
         isWatching = false
-        hostView.present(incoming, sending: parked, showCover: needsCover)
+        hostView.present(browseWebView, sending: parked, showCover: needsCover)
     }
 
-    /// Nút "quay lại app" của cửa sổ PiP: đưa WebView đang PiP lên lại, trang duyệt trở thành spare
+    /// Nút "quay lại app" của cửa sổ PiP: đưa WebView video lên lại (WebView duyệt vẫn ở phía sau)
     func restoreParked() {
         guard let parked = parkedWebView else { return }
-        let browse = webView
+        let previous = webView
         parkedWebView = nil
         webView = parked
         observeURL()
-        // Trang duyệt cũ giữ nguyên làm spare: lần vuốt xuống kế tiếp hiện ngay, không cần nạp lại
-        discardSpare()
-        spareWebView = browse
-        hostView.present(parked, sending: browse, showCover: false)
+        hostView.present(parked, sending: previous, showCover: false)
         updateWatching()
     }
 
@@ -224,7 +210,6 @@ final class WebController: NSObject, ObservableObject {
     deinit {
         NotificationCenter.default.removeObserver(self)
         urlObservation?.invalidate()
-        spareTask?.cancel()
     }
 
     func dismissSplash() {
@@ -475,9 +460,7 @@ final class WebController: NSObject, ObservableObject {
         if isWatching != watching { isWatching = watching }
         if watching {
             destroyParked()   // mở video mới → đóng PiP cũ
-            scheduleSpare()
         } else {
-            discardSpare()    // rời trang video → không cần giữ WebView dự phòng (tiết kiệm RAM)
             if let url, (url.host ?? "").contains("youtube.") {
                 lastBrowseURL = url   // nhớ trang trước khi vào video để quay về đúng chỗ
             }
@@ -662,6 +645,11 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                                 if (dict["restore"] as? Bool) == true { target.restoreParked() }
                                 else { target.destroyParked() }
                             }
+                        } else if action == "openWatch" {
+                            if fromVisible, let str = dict["url"] as? String, let url = URL(string: str),
+                               (url.host ?? "").hasSuffix("youtube.com") {
+                                target.openWatch(url)
+                            }
                         } else if action == "openDownloads" {
                             target.showOfflineLibrary = true
                         } else if action == "requestDownload" {
@@ -740,7 +728,6 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if webView === parkedWebView { destroyParked(); return }
-        if webView === spareWebView { discardSpare(); return }   // spare chết thì bỏ, không reload ngầm
         guard webView === self.webView else { return }
         NSLog("Aether: WebContent process terminated, tự động nạp lại...")
         webView.reload()

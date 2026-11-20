@@ -260,6 +260,28 @@
       /* Chặn trang cuộn theo khi vuốt trên video → cử chỉ vuốt-xuống-thu-nhỏ không bị giành quyền */
       touch-action: none !important;
     }
+    /* Xoay ngang: player phủ kín màn hình (iOS không cho script tự vào fullscreen nếu không có chạm,
+       nên dùng "fullscreen giả" bằng CSS; class ae-land do uienhance.js bật khi width > height) */
+    body.ae-land.ae-watching { overflow: hidden !important; }
+    body.ae-land.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
+    body.ae-land.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
+      top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+      width: 100vw !important; height: 100vh !important; max-height: none !important;
+      z-index: 2147483000 !important;
+    }
+    body.ae-land.ae-watching #player-container-id .html5-video-player,
+    body.ae-land.ae-watching #player-container-id #player,
+    body.ae-land.ae-watching #player-container-id .html5-video-container,
+    body.ae-land.ae-watching .player-container .html5-video-player {
+      width: 100% !important; height: 100% !important; max-height: none !important;
+    }
+    body.ae-land.ae-watching #player-container-id video,
+    body.ae-land.ae-watching .player-container video {
+      width: 100% !important; height: 100% !important; left: 0 !important; top: 0 !important; object-fit: contain !important;
+    }
+    /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
+    body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
+
     #ae-player-spacer { display: block; width: 100%; height: 0; background: #000; pointer-events: none; }
 
     /* Thanh chip (All / From the series / Related…) không dính cứng ở đầu trang nữa:

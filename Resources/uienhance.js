@@ -189,9 +189,11 @@
       padding-left: 2px !important;
     }
 
-    /* Chuyển trang mượt mà */
-    ytm-section-list-renderer, ytm-search-results-section-renderer {
-      animation: ae-fadein 0.2s ease both !important;
+    /* Chuyển trang mượt mà. Chỉ ngoài trang watch, và fill-mode "backwards" để KHÔNG giữ transform sau khi xong:
+       transform còn sót trên tổ tiên làm position:fixed/sticky (player, chip) bị lệch theo trang. */
+    body:not(.ae-watching) ytm-section-list-renderer,
+    body:not(.ae-watching) ytm-search-results-section-renderer {
+      animation: ae-fadein 0.2s ease backwards;
     }
     @keyframes ae-fadein {
       from { opacity: 0; transform: translateY(4px); }
@@ -261,22 +263,6 @@
             align-items: center;
             justify-content: space-between;
             cursor: pointer;
-          `;
-          card.innerHTML = `
-            <div style="display:flex;align-items:center;gap:12px;">
-              <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,36,66,0.18);display:flex;align-items:center;justify-content:center;">
-                <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:none;stroke:#ff334b;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <polyline points="8 12 12 16 16 12"></polyline>
-                  <line x1="12" y1="8" x2="12" y2="16"></line>
-                </svg>
-              </div>
-              <div>
-                <div style="font-size:14px;font-weight:700;color:#fff;">Video đã tải ngoại tuyến</div>
-                <div style="font-size:11px;color:#aaa;margin-top:2px;">Xem lại mọi lúc không cần mạng</div>
-              </div>
-            </div>
-            <div style="color:#aaa;font-size:18px;">›</div>
           `;
           card.addEventListener('click', () => {
             try {
@@ -568,13 +554,35 @@
   })();
 
   // ── 5b. Vuốt xuống từ video → PiP + về trang trước (chạy trong JS để có user gesture) ─
+  // Mượt: cập nhật transform trong requestAnimationFrame (1 lần/frame), chỉ dùng transform+opacity (GPU),
+  // touch-action:none trên player (CSS ở adblock.js) để trang không cuộn tranh quyền, và khi thả quá ngưỡng
+  // video tiếp tục trượt ra thay vì bật ngược lại rồi mới biến mất.
+  const playerEl = (v) => v.closest('#player-container-id, .player-container') || v.parentElement;
+  const resetPlayer = (el, animate) => {
+    if (!el) return;
+    el.style.transition = animate ? 'transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s ease' : 'none';
+    el.style.transform = ''; el.style.opacity = '';
+    setTimeout(() => { el.style.transition = ''; el.style.willChange = ''; }, animate ? 260 : 30);
+  };
+
   (() => {
-    let g = null, busy = false;
-    const playerEl = (v) => v.closest('#player-container-id, .player-container') || v.parentElement;
+    let g = null, busy = false, raf = 0, lastEl = null;
+    const COMMIT_DIST = 90;
+
+    const paint = () => {
+      raf = 0;
+      if (!g || g.lock !== 'v' || !g.el) return;
+      const dy = Math.max(0, g.dy);
+      const ty = dy < 120 ? dy : 120 + (dy - 120) * 0.35;           // kéo càng xa càng nặng tay
+      const p = Math.min(1, dy / 260);
+      g.el.style.transform = 'translate3d(0,' + ty.toFixed(1) + 'px,0) scale(' + (1 - p * 0.1).toFixed(3) + ')';
+      g.el.style.opacity = String(1 - p * 0.55);
+    };
 
     window.addEventListener('touchstart', (e) => {
       g = null;
       if (busy || !location.pathname.startsWith('/watch') || e.touches.length !== 1) return;
+      if (document.body.classList.contains('ae-land')) return;   // xoay ngang: không có cử chỉ thu nhỏ
       const v = document.querySelector('.html5-video-player video, video');
       if (!v || v.webkitDisplayingFullscreen || document.fullscreenElement) return;
       const r = v.getBoundingClientRect();
@@ -587,43 +595,185 @@
       if (!g) return;
       const t = e.touches[0];
       const dx = t.clientX - g.x0, dy = t.clientY - g.y0;
-      if (!g.lock && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      if (!g.lock && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
         g.lock = (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) ? 'v' : 'x';   // chỉ nhận vuốt xuống dọc
+        if (g.lock === 'v' && g.el) {
+          g.el.style.transition = 'none';
+          g.el.style.willChange = 'transform, opacity';
+          g.y0 = t.clientY;   // tính từ lúc khoá hướng → video bám ngón tay, không bị giật nhảy ban đầu
+        }
       }
       if (g.lock === 'x') { g = null; return; }
       if (g.lock === 'v') {
-        g.dy = dy;
-        if (g.el) {   // video đi theo ngón tay, mờ dần giống app YouTube
-          g.el.style.transition = 'none';
-          g.el.style.transform = 'translate3d(0,' + Math.min(dy, 220) * 0.6 + 'px,0)';
-          g.el.style.opacity = String(Math.max(0.5, 1 - dy / 500));
-        }
+        g.dy = t.clientY - g.y0;
+        if (!raf) raf = requestAnimationFrame(paint);
       }
     }, { passive: true, capture: true });
 
-    const reset = (el, animate) => {
-      if (!el) return;
-      el.style.transition = animate ? 'transform .2s ease, opacity .2s ease' : 'none';
-      el.style.transform = ''; el.style.opacity = '';
-      setTimeout(() => { el.style.transition = ''; }, 260);
-    };
-
-    window.addEventListener('touchend', () => {
+    const finish = (cancelled) => {
       const s = g; g = null;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       if (!s || s.lock !== 'v') return;
-      const v = (Date.now() - s.t0) || 1;
-      const fast = s.dy > 40 && (s.dy / v) > 0.5;
-      if (s.dy > 80 || fast) {
-        reset(s.el, true);
+      const dt = (Date.now() - s.t0) || 1;
+      const fast = s.dy > 40 && (s.dy / dt) > 0.5;
+      if (!cancelled && (s.dy > COMMIT_DIST || fast)) {
+        // Tiếp tục trượt ra rồi mờ hẳn: liền mạch với lúc PiP bật lên
+        lastEl = s.el;
+        if (s.el) {
+          s.el.style.transition = 'transform .2s cubic-bezier(.4,0,1,1), opacity .2s ease';
+          s.el.style.transform = 'translate3d(0,' + Math.max(160, s.dy) + 'px,0) scale(.88)';
+          s.el.style.opacity = '0';
+        }
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
-        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { }
+        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { resetPlayer(s.el, true); }
       } else {
-        reset(s.el, true);
+        resetPlayer(s.el, true);
       }
-    }, { passive: true, capture: true });
-    window.addEventListener('touchcancel', () => { if (g) reset(g.el, true); g = null; }, { passive: true, capture: true });
+    };
+    window.addEventListener('touchend', () => finish(false), { passive: true, capture: true });
+    window.addEventListener('touchcancel', () => finish(true), { passive: true, capture: true });
+
+    // Kết quả thu nhỏ: thất bại → đưa video về chỗ cũ; thành công → trang đã bị "park" phía sau,
+    // dọn style lúc không ai nhìn thấy để khi quay lại từ PiP video hiện đúng vị trí
+    window.addEventListener('ae:minimize-result', (e) => {
+      const el = lastEl; lastEl = null;
+      if (!el) return;
+      if (e.detail && e.detail.ok) setTimeout(() => resetPlayer(el, false), 700);
+      else resetPlayer(el, true);
+    });
   })();
+
+  // ── 5c. Player ghim: spacer giữ chỗ cho nội dung bên dưới (player đang position:fixed, xem adblock.js) ──
+  const ensurePlayerSpacer = (() => {
+    let ro = null, watched = null, resizeBound = false;
+    return () => {
+      if (!location.pathname.startsWith('/watch')) return;
+      const player = document.getElementById('player-container-id') || document.querySelector('.player-container');
+      if (!player || !player.parentNode) return;
+      let sp = document.getElementById('ae-player-spacer');
+      if (!sp) { sp = document.createElement('div'); sp.id = 'ae-player-spacer'; }
+      if (sp.nextSibling !== player || sp.parentNode !== player.parentNode) player.parentNode.insertBefore(sp, player);
+      const measure = () => {
+        // Player đang position:fixed nên offsetHeight có thể = 0 (nội dung con định vị tuyệt đối) → lấy lớn nhất của
+        // container / .html5-video-player / video; không có thì dùng tỉ lệ 16:9 theo bề rộng.
+        const hs = [
+          player.getBoundingClientRect().height,
+          player.querySelector('.html5-video-player')?.getBoundingClientRect().height || 0,
+          player.querySelector('video')?.getBoundingClientRect().height || 0
+        ];
+        let h = Math.max(...hs);
+        if (!(h > 20)) h = window.innerWidth * 9 / 16;
+        return Math.round(Math.min(h, window.innerHeight * 0.6));
+      };
+      const sync = () => {
+        if (document.fullscreenElement || document.webkitFullscreenElement) return;   // fullscreen: giữ nguyên
+        if (document.body.classList.contains('ae-land')) return;                      // xoay ngang: giữ nguyên
+        const h = measure();
+        if (sp.style.height !== h + 'px') sp.style.height = h + 'px';
+      };
+      sync();
+      if (typeof ResizeObserver === 'function' && watched !== player) {
+        if (ro) ro.disconnect();
+        ro = new ResizeObserver(sync);
+        ro.observe(player);
+        const inner = player.querySelector('.html5-video-player');
+        if (inner) ro.observe(inner);
+        watched = player;
+      }
+      if (!resizeBound) { resizeBound = true; window.addEventListener('resize', () => setTimeout(ensurePlayerSpacer, 0), { passive: true }); }
+    };
+  })();
+
+  // ── 5c-2. Xoay ngang: bật class ae-land (CSS ở adblock.js làm player phủ kín màn hình) ──
+  const syncLandscape = () => {
+    if (!document.body) return;
+    const v = document.querySelector('video');
+    const native = !!(v && v.webkitDisplayingFullscreen);
+    const on = location.pathname.startsWith('/watch') && window.innerWidth > window.innerHeight && !native;
+    document.body.classList.toggle('ae-land', on);
+  };
+  window.addEventListener('resize', syncLandscape, { passive: true });
+  window.addEventListener('orientationchange', () => setTimeout(syncLandscape, 150), { passive: true });
+  window.addEventListener('ae:navigate', syncLandscape);
+
+  // ── 5c-3. Bấm video ở trang duyệt → mở ở WebView riêng (giữ nguyên trang chủ phía sau) ────────
+  window.addEventListener('click', (e) => {
+    if (location.pathname.startsWith('/watch') || e.defaultPrevented) return;
+    const a = e.target.closest?.('a[href]');
+    if (!a) return;
+    let u;
+    try { u = new URL(a.getAttribute('href'), location.href); } catch (_) { return; }
+    if (!/(^|\.)youtube\.com$/.test(u.hostname) || u.pathname !== '/watch' || !u.searchParams.get('v')) return;
+    try {
+      const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.aetherNav;
+      if (!h) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      h.postMessage({ action: 'openWatch', url: u.href });
+    } catch (_) { }
+  }, true);
+
+  // ── 5c-4. Thẻ "Next: … Mix" ở đáy: bấm vào BẤT KỲ đâu trên thẻ = mở danh sách (như bấm mũi tên) ──
+  // Trước đây chạm vào thân thẻ không mở panel mà còn xuyên xuống video đề xuất bên dưới → nhảy sang video khác.
+  window.addEventListener('click', (e) => {
+    if (!location.pathname.startsWith('/watch') || e.defaultPrevented) return;
+    const x = e.clientX, y = e.clientY;
+    if (y < window.innerHeight * 0.6) return;
+    let card = null;
+    for (const el of document.elementsFromPoint(x, y)) {
+      if (el.closest('#ae-sheet, #ae-toast, #ae-player-spacer')) return;
+      for (let n = el, i = 0; n && n !== document.body && i < 10; n = n.parentElement, i++) {
+        const pos = getComputedStyle(n).position;
+        if (pos !== 'fixed' && pos !== 'sticky') continue;
+        const r = n.getBoundingClientRect();
+        if (r.width > window.innerWidth * 0.7 && r.height > 30 && r.height < 160 && r.top > window.innerHeight * 0.55) { card = n; break; }
+      }
+      if (card) break;
+    }
+    if (!card) return;
+    const btns = card.querySelectorAll('button, [role="button"], .icon-button');
+    if (!btns.length) return;
+    const arrow = btns[btns.length - 1];
+    if (arrow.contains(e.target)) return;   // đã bấm trúng mũi tên → để YouTube tự xử lý
+    e.preventDefault(); e.stopImmediatePropagation();
+    arrow.click();
+  }, true);
+
+  // ── 5d. Animation mượt khi mở "xem trả lời" bình luận ──────────────────────────────────────────
+  // CSS keyframes không làm nội dung bên dưới trượt theo → vẫn thấy "giật cục". Animate chiều cao thật bằng WAAPI.
+  const animateReveal = (el, delay) => {
+    if (!el || el.__aeRevealed || typeof el.animate !== 'function') return;
+    el.__aeRevealed = true;
+    const h = el.getBoundingClientRect().height;
+    if (h < 8) return;
+    el.style.overflow = 'hidden';
+    const anim = el.animate(
+      [
+        { height: '0px', opacity: 0, transform: 'translateY(-8px)' },
+        { height: h + 'px', opacity: 1, transform: 'translateY(0)' }
+      ],
+      { duration: 300, delay: delay || 0, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards' }
+    );
+    const done = () => { el.style.overflow = ''; };
+    anim.onfinish = done; anim.oncancel = done;
+  };
+
+  const REPLY_SEL = 'ytm-comment-replies-renderer ytm-comment-renderer, ytm-comment-replies-renderer .comment-reply, .comment-replies-renderer ytm-comment-renderer';
+  const observeReplies = () => {
+    if (!document.body) return;
+    new MutationObserver((muts) => {
+      if (!location.pathname.startsWith('/watch')) return;
+      let i = 0;
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          // Chỉ animate phần tử TRẢ LỜI mới thêm vào (bình luận gốc và panel giữ nguyên hành vi của YouTube)
+          if (n.matches?.(REPLY_SEL)) animateReveal(n, Math.min(i++, 6) * 40);
+          else if (n.matches?.('ytm-comment-replies-renderer, .comment-replies-renderer')) animateReveal(n, 0);
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  };
 
   // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
   document.addEventListener('DOMContentLoaded', () => {
@@ -665,25 +815,41 @@
     window.addEventListener('popstate', refreshUI);
     window.addEventListener('hashchange', refreshUI);
     window.addEventListener('ae:navigate', refreshUI);
+    window.addEventListener('ae:navigate', () => setTimeout(ensurePlayerSpacer, 0));
 
     try {
       window.webkit?.messageHandlers?.aetherReady?.postMessage('ready');
     } catch (_) { }
 
     refreshUI();
+    ensurePlayerSpacer();
+    observeReplies();
 
-    let moScheduled = false;
+    // MutationObserver: khi đang xem video YouTube đổi DOM liên tục (thanh tiến trình, bình luận…).
+    // Trước đây mỗi lần đổi là chạy cả loạt querySelectorAll nặng → chiếm main thread, cử chỉ vuốt bị giật.
+    // Giờ: trên /watch chỉ chạy việc nhẹ, tối đa ~4 lần/giây; ngoài /watch vẫn đủ nhanh (1 lần/frame).
+    let moScheduled = false, moLast = 0, moTimer = 0;
+    const runEnhancers = () => {
+      moScheduled = false; moTimer = 0; moLast = Date.now();
+      if (location.pathname.startsWith('/watch')) {
+        removeShortsElements();
+        ensurePlayerSpacer();
+        syncLandscape();
+        return;
+      }
+      document.getElementById('ae-player-spacer')?.remove();   // rời trang watch → bỏ chỗ giữ cho player
+      replaceLogoWithAether();
+      cleanProfileMenu();
+      removeShortsElements();
+      injectDownloadsTab();
+      enhanceSearch();
+    };
     const observer = new MutationObserver(() => {
       if (moScheduled) return;
       moScheduled = true;
-      window.requestAnimationFrame(() => {
-        replaceLogoWithAether();
-        cleanProfileMenu();
-        removeShortsElements();
-        injectDownloadsTab();
-        enhanceSearch();
-        moScheduled = false;
-      });
+      const wait = location.pathname.startsWith('/watch') ? Math.max(0, 250 - (Date.now() - moLast)) : 0;
+      if (wait > 0) moTimer = setTimeout(runEnhancers, wait);
+      else window.requestAnimationFrame(runEnhancers);
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }, { once: true });
