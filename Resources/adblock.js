@@ -127,25 +127,25 @@
       // Đảm bảo không bị PiP zombie khi mở video mới
       const v = currentVideo();
       if (v && v.webkitPresentationMode === 'picture-in-picture') {
-        try { v.webkitSetPresentationMode('inline'); } catch (_) {}
+        try { v.webkitSetPresentationMode('inline'); } catch (_) { }
       }
       // Dọn dẹp video detached cũ nếu có khi mở trang xem mới
       const detached = document.body?.querySelectorAll(':scope > video');
       if (detached && detached.length > 0) {
         detached.forEach(oldV => {
           if (oldV !== document.querySelector('.html5-video-player video')) {
-            try { oldV.pause(); oldV.remove(); } catch (_) {}
+            try { oldV.pause(); oldV.remove(); } catch (_) { }
           }
         });
       }
       startAdSkipper();
     }
     else if (adInterval) { clearInterval(adInterval); adInterval = null; }
-    
+
     // Báo trạng thái xem cho Swift Native
     try {
       window.webkit?.messageHandlers?.aetherNav?.postMessage({ isWatching: isWatch });
-    } catch (_) {}
+    } catch (_) { }
   };
 
   window.addEventListener('popstate', syncAdSkipper, true);
@@ -287,7 +287,7 @@
     if (v instanceof HTMLVideoElement) {
       if (v.webkitPresentationMode === 'picture-in-picture') {
         window.__aeInPiP = true;
-        if (v.paused) v.play().catch(() => {});
+        if (v.paused) v.play().catch(() => { });
       } else {
         window.__aeInPiP = false;
       }
@@ -320,7 +320,7 @@
         isPlaying: !v.paused,
         thumbnail: thumbnail
       });
-    } catch (_) {}
+    } catch (_) { }
   };
 
   const media = {
@@ -388,6 +388,48 @@
         console.warn('Aether PiP error:', e);
       }
       return 'unsupported';
+    },
+    // Lấy manifest HLS + metadata từ chính player response mà trang YouTube dùng để phát.
+    // HLS không cần PO Token như link googlevideo trực tiếp nên không bị 403.
+    async getHLS(videoId) {
+      const pick = (r) => {
+        if (!r) return null;
+        const vid = r.videoDetails && r.videoDetails.videoId;
+        if (vid && vid !== videoId) return null;
+        const hls = r.streamingData && r.streamingData.hlsManifestUrl;
+        if (!hls) return null;
+        const d = r.videoDetails || {};
+        return {
+          hls: hls,
+          title: d.title || '',
+          author: d.author || '',
+          duration: parseFloat(d.lengthSeconds) || 0
+        };
+      };
+
+      // 1. Ưu tiên dữ liệu trang đã nhận sẵn
+      const cached = pick(playerResponsesByVid.get(videoId))
+        || pick(window.__lastPlayerResponse)
+        || pick(window.ytInitialPlayerResponse);
+      if (cached) return cached;
+
+      // 2. Chưa có: tự gọi player API bằng đúng context của trang (cookie + visitorData hợp lệ)
+      try {
+        const cfg = window.ytcfg && window.ytcfg.get ? window.ytcfg : null;
+        const ctx = cfg && cfg.get('INNERTUBE_CONTEXT');
+        if (!ctx) return null;
+        const key = cfg.get('INNERTUBE_API_KEY');
+        const res = await fetch('/youtubei/v1/player?prettyPrint=false' + (key ? '&key=' + key : ''), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: videoId, context: ctx, contentCheckOk: true, racyCheckOk: true })
+        });
+        if (!res.ok) return null;
+        return pick(await res.json());
+      } catch (e) {
+        console.warn('Aether getHLS error:', e);
+        return null;
+      }
     },
     async extractDownloadStreams() {
       try {
@@ -570,7 +612,7 @@
         e.stopPropagation();
         try {
           window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'enterFullscreen' });
-        } catch (_) {}
+        } catch (_) { }
         if (v.webkitEnterFullscreen) {
           v.webkitEnterFullscreen();
         }
@@ -582,7 +624,7 @@
   document.addEventListener('webkitendfullscreen', () => {
     try {
       window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'exitFullscreen' });
-    } catch (_) {}
+    } catch (_) { }
   }, true);
 
   // Tự động vào Native iOS Fullscreen khi người dùng xoay ngang điện thoại lúc xem video

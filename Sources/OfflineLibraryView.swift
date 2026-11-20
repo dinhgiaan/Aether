@@ -159,6 +159,8 @@ private struct DownloadedVideoRow: View {
     let video: OfflineVideo
     
     private var isCorrupted: Bool {
+        // HLS: chỉ cần playlist tồn tại (file playlist nhỏ hơn 10KB là bình thường)
+        if video.isHLS { return !FileManager.default.fileExists(atPath: video.videoURL.path) }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
               let size = attrs[.size] as? Int64 else { return true }
         return size < 10_000

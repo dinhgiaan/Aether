@@ -196,7 +196,8 @@ struct ContentView: View {
                         audioURLString: chosenStream.audioURL,
                         thumbnailURLString: info.thumbnailURL,
                         userAgent: chosenStream.userAgent,
-                        clientName: chosenStream.clientName
+                        clientName: chosenStream.clientName,
+                        isHLS: chosenStream.isHLS
                     )
                     web.showDownloadSheet = false
                 }

@@ -22,6 +22,9 @@ struct OfflineVideo: Identifiable, Codable, Equatable {
         guard let name = localThumbnailFileName else { return nil }
         return OfflineManager.videosDirectory.appendingPathComponent(name)
     }
+
+    /// Video tải qua HLS: lưu thành thư mục chứa playlist + segment thay vì 1 file mp4
+    var isHLS: Bool { localVideoFileName.hasSuffix(".m3u8") }
 }
 
 /// Trình quản lý tải và phát video offline độ phân giải cao với tiến trình thời gian thực
@@ -59,6 +62,10 @@ final class OfflineManager: NSObject, ObservableObject {
         var validVideos: [OfflineVideo] = []
         for video in list {
             guard FileManager.default.fileExists(atPath: video.videoURL.path) else { continue }
+            if video.isHLS {
+                validVideos.append(video)
+                continue
+            }
             if let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
                let size = attrs[.size] as? Int64, size > 10_000 {
                 validVideos.append(video)
@@ -88,6 +95,7 @@ final class OfflineManager: NSObject, ObservableObject {
         thumbnailURLString: String?,
         userAgent: String? = nil,
         clientName: String? = nil,
+        isHLS: Bool = false,               // true: streamURLString là media playlist HLS
         triedClients: Set<String> = [],
         refreshesLeft: Int = 1             // Số lần được "làm mới URL cùng client" trước khi đổi client
     ) {
@@ -156,6 +164,21 @@ final class OfflineManager: NSObject, ObservableObject {
             }
         }
         
+        // HLS: tải từng segment (không cần PO Token) rồi lưu thành playlist cục bộ
+        if isHLS {
+            startHLSDownload(
+                videoId: videoId,
+                title: title,
+                author: author,
+                quality: quality,
+                duration: duration,
+                videoPlaylist: videoStreamURL,
+                audioPlaylist: audioURLString.flatMap { URL(string: $0) },
+                thumbFileName: thumbFileName
+            )
+            return
+        }
+
         // Luồng đơn (Progressive có sẵn âm thanh) hoặc Luồng kép (Adaptive)
         if let audioURLStr = audioURLString, let audioStreamURL = URL(string: audioURLStr) {
             startDualDownload(
@@ -360,6 +383,87 @@ final class OfflineManager: NSObject, ObservableObject {
         return destTempURL
     }
 
+    // MARK: – Tải HLS (segment) và lưu thành playlist cục bộ để phát offline
+    private func startHLSDownload(
+        videoId: String,
+        title: String,
+        author: String,
+        quality: String,
+        duration: Double,
+        videoPlaylist: URL,
+        audioPlaylist: URL?,
+        thumbFileName: String?
+    ) {
+        Task {
+            let folder = Self.videosDirectory.appendingPathComponent(videoId, isDirectory: true)
+            do {
+                try? FileManager.default.removeItem(at: folder)
+                let videoDir = folder.appendingPathComponent("video", isDirectory: true)
+                let audioDir = folder.appendingPathComponent("audio", isDirectory: true)
+                try FileManager.default.createDirectory(at: videoDir, withIntermediateDirectories: true)
+
+                self.activeDownloadStatus[videoId] = "Đang đọc danh sách đoạn video..."
+                let videoPlan = try await HLSDownloader.plan(playlistURL: videoPlaylist)
+                var audioPlan: HLSPlan? = nil
+                if let audioPlaylist {
+                    try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+                    audioPlan = try await HLSDownloader.plan(playlistURL: audioPlaylist)
+                }
+
+                var jobs = videoPlan.items.map {
+                    HLSDownloader.Job(remote: $0.remote, local: videoDir.appendingPathComponent($0.localName))
+                }
+                if let audioPlan {
+                    jobs += audioPlan.items.map {
+                        HLSDownloader.Job(remote: $0.remote, local: audioDir.appendingPathComponent($0.localName))
+                    }
+                }
+
+                try await HLSDownloader.download(jobs: jobs) { [weak self] done, total in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        let fraction = Double(done) / Double(max(total, 1))
+                        self.activeDownloadProgress[videoId] = max(0.02, min(0.98, fraction))
+                        self.activeDownloadStatus[videoId] = "\(done) / \(total) đoạn (\(Int(fraction * 100))%)"
+                    }
+                }
+
+                // Ghi playlist cục bộ (đường dẫn tương đối tới các segment vừa tải)
+                try videoPlan.localPlaylist.write(to: videoDir.appendingPathComponent("index.m3u8"), atomically: true, encoding: .utf8)
+                var playlistRelativePath = "\(videoId)/video/index.m3u8"
+
+                if let audioPlan {
+                    try audioPlan.localPlaylist.write(to: audioDir.appendingPathComponent("index.m3u8"), atomically: true, encoding: .utf8)
+                    // Master playlist ghép luồng hình + luồng tiếng
+                    let master = """
+                    #EXTM3U
+                    #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="audio/index.m3u8"
+                    #EXT-X-STREAM-INF:BANDWIDTH=5000000,AUDIO="aud"
+                    video/index.m3u8
+
+                    """
+                    try master.write(to: folder.appendingPathComponent("master.m3u8"), atomically: true, encoding: .utf8)
+                    playlistRelativePath = "\(videoId)/master.m3u8"
+                }
+
+                self.finishDownload(
+                    videoId: videoId,
+                    title: title,
+                    author: author,
+                    quality: quality,
+                    duration: duration,
+                    fileName: playlistRelativePath,
+                    thumbName: thumbFileName,
+                    isHLS: true
+                )
+            } catch {
+                NSLog("Aether HLS download error: %@", error.localizedDescription)
+                try? FileManager.default.removeItem(at: folder)
+                self.failDownload(videoId: videoId, message: "Lỗi tải video (HLS): \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: – Tải đơn luồng (Progressive)
     private func startSingleDownload(
         videoId: String,
@@ -484,14 +588,23 @@ final class OfflineManager: NSObject, ObservableObject {
         quality: String,
         duration: Double,
         fileName: String,
-        thumbName: String?
+        thumbName: String?,
+        isHLS: Bool = false
     ) {
         let destURL = Self.videosDirectory.appendingPathComponent(fileName)
-        // Kiểm tra kích thước file thật trước khi xác nhận lưu
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: destURL.path),
-              let size = attrs[.size] as? Int64, size > 10_000 else {
-            failDownload(videoId: videoId, message: "File tải về không hợp lệ hoặc bị lỗi")
-            return
+        if isHLS {
+            // HLS là playlist nhỏ + nhiều segment: chỉ cần playlist tồn tại
+            guard FileManager.default.fileExists(atPath: destURL.path) else {
+                failDownload(videoId: videoId, message: "Không tạo được playlist offline")
+                return
+            }
+        } else {
+            // Kiểm tra kích thước file thật trước khi xác nhận lưu
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: destURL.path),
+                  let size = attrs[.size] as? Int64, size > 10_000 else {
+                failDownload(videoId: videoId, message: "File tải về không hợp lệ hoặc bị lỗi")
+                return
+            }
         }
 
         let video = OfflineVideo(
@@ -599,7 +712,12 @@ final class OfflineManager: NSObject, ObservableObject {
     }
     
     func deleteVideo(_ video: OfflineVideo) {
-        try? FileManager.default.removeItem(at: video.videoURL)
+        if video.isHLS {
+            // Video HLS nằm trong thư mục <videoId>/ chứa playlist + segment
+            try? FileManager.default.removeItem(at: Self.videosDirectory.appendingPathComponent(video.id, isDirectory: true))
+        } else {
+            try? FileManager.default.removeItem(at: video.videoURL)
+        }
         if let thumbURL = video.thumbnailURL {
             try? FileManager.default.removeItem(at: thumbURL)
         }

@@ -17,6 +17,8 @@ struct StreamOption: Identifiable, Codable {
     // UA + tên client đã sinh ra URL này: phải tải bằng đúng UA, nếu không googlevideo trả 403
     var userAgent: String? = nil
     var clientName: String? = nil
+    // true: url là media playlist HLS (audioURL là playlist âm thanh nếu tách riêng)
+    var isHLS: Bool = false
 }
 
 struct VideoDownloadInfo: Identifiable {
@@ -271,7 +273,68 @@ final class WebController: NSObject, ObservableObject {
         return nil
     }
 
+    /// Lấy danh sách chất lượng HLS từ chính trang đang phát (không cần PO Token)
+    private func resolveHLS(videoId: String) async -> VideoDownloadInfo? {
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                "return window.__aeMedia && window.__aeMedia.getHLS ? await window.__aeMedia.getHLS(videoId) : null;",
+                arguments: ["videoId": videoId],
+                in: nil,
+                contentWorld: .page
+            )
+            guard let dict = result as? [String: Any],
+                  let hlsString = dict["hls"] as? String,
+                  let hlsURL = URL(string: hlsString) else { return nil }
+
+            let variants = try await HLSParser.variants(masterURL: hlsURL)
+            // Ưu tiên >= 720p; nếu video không có thì hiện tất cả mức đang có
+            let hd = variants.filter { $0.height >= 720 }
+            let chosen = hd.isEmpty ? variants : hd
+            guard !chosen.isEmpty else { return nil }
+
+            let streams = chosen.map { v in
+                StreamOption(
+                    quality: Self.hlsQualityLabel(height: v.height),
+                    url: v.playlistURL.absoluteString,
+                    audioURL: v.audioPlaylistURL?.absoluteString,
+                    mimeType: "application/vnd.apple.mpegurl",
+                    isHLS: true
+                )
+            }
+            let title = (dict["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Video"
+            let author = (dict["author"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "YouTube"
+            let duration = (dict["duration"] as? Double) ?? 0
+            return VideoDownloadInfo(
+                id: videoId,
+                title: title,
+                author: author,
+                duration: duration,
+                thumbnailURL: "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg",
+                streams: streams
+            )
+        } catch {
+            NSLog("Aether HLS resolve error: %@", error.localizedDescription)
+            return nil
+        }
+    }
+
+    private static func hlsQualityLabel(height: Int) -> String {
+        switch height {
+        case 2160...: return "2160p (4K Ultra HD)"
+        case 1440...: return "1440p (2K QHD)"
+        case 1080...: return "1080p Full HD"
+        case 720...:  return "720p HD"
+        default:      return "\(height)p"
+        }
+    }
+
     private func resolveAndShowDownload(videoId: String) async {
+        // Ưu tiên HLS: link googlevideo trực tiếp (client IOS) bị 403 vì thiếu PO Token
+        if let hlsInfo = await resolveHLS(videoId: videoId) {
+            self.activeDownloadInfo = hlsInfo
+            self.showDownloadSheet = true
+            return
+        }
         if let info = await YouTubeStreamResolver.resolve(videoId: videoId) {
             self.activeDownloadInfo = info
             self.showDownloadSheet = true
