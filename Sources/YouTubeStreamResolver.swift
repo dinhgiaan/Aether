@@ -128,6 +128,20 @@ enum ResolveLog {
     static func add(_ value: String) { lock.lock(); entries.append(value); lock.unlock() }
 }
 
+/// visitorData của phiên YouTube đang chạy trong WKWebView. yt-dlp luôn gửi kèm giá trị này;
+/// thiếu nó, các request InnerTube ẩn danh dễ bị trả LOGIN_REQUIRED / UNPLAYABLE.
+enum YouTubeSession {
+    private static let lock = NSLock()
+    private static var _visitorData: String?
+    static var visitorData: String? {
+        lock.lock(); defer { lock.unlock() }
+        return _visitorData
+    }
+    static func setVisitorData(_ value: String) {
+        lock.lock(); _visitorData = value; lock.unlock()
+    }
+}
+
 struct YouTubeStreamResolver {
     /// Trích xuất stream trực tiếp (>= 720p). Thử lần lượt từng client, bỏ qua các client trong `excluding`
     /// (dùng khi một client đã bị 403 lúc tải và cần đổi sang client khác).
@@ -156,6 +170,12 @@ struct YouTubeStreamResolver {
         request.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(client.clientId, forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue(client.version, forHTTPHeaderField: "X-YouTube-Client-Version")
+        // Gắn visitorData của phiên WebView (nếu có) vào cả header lẫn context
+        var clientContext = client.context
+        if let visitorData = YouTubeSession.visitorData {
+            request.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
+            clientContext["visitorData"] = visitorData
+        }
         if client.name == "WEB" {
             request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         }
@@ -164,7 +184,7 @@ struct YouTubeStreamResolver {
             "videoId": videoId,
             "contentCheckOk": true,
             "racyCheckOk": true,
-            "context": ["client": client.context]
+            "context": ["client": clientContext]
         ]
         guard let bodyData = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
         request.httpBody = bodyData
@@ -182,7 +202,9 @@ struct YouTubeStreamResolver {
             let playability = json["playabilityStatus"] as? [String: Any]
             let playStatus = playability?["status"] as? String ?? "?"
             guard playStatus == "OK" else {
-                ResolveLog.add("\(client.name):ps=\(playStatus)")
+                // Kèm lý do YouTube trả về (cắt ngắn) để biết là bot-check, giới hạn vùng, hay yêu cầu đăng nhập
+                let reason = (playability?["reason"] as? String).map { String($0.prefix(60)) } ?? ""
+                ResolveLog.add("\(client.name):ps=\(playStatus)[\(reason)]vd=\(YouTubeSession.visitorData == nil ? "no" : "yes")")
                 return nil
             }
 

@@ -338,7 +338,16 @@ final class WebController: NSObject, ObservableObject {
         }
     }
 
+    /// Đọc visitorData từ ytcfg của trang YouTube đang mở để InnerTube dùng chung phiên
+    private func refreshVisitorData() async {
+        let js = "(function(){try{return (window.ytcfg&&ytcfg.get&&ytcfg.get('VISITOR_DATA'))||''}catch(e){return ''}})()"
+        if let value = (try? await webView.evaluateJavaScript(js)) as? String, !value.isEmpty {
+            YouTubeSession.setVisitorData(value)
+        }
+    }
+
     private func resolveAndShowDownload(videoId: String) async {
+        await refreshVisitorData()
         // Ưu tiên HLS: link googlevideo trực tiếp (client IOS) bị 403 vì thiếu PO Token
         if let hlsInfo = await resolveHLS(videoId: videoId) {
             self.activeDownloadInfo = hlsInfo
