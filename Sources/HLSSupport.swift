@@ -1,5 +1,18 @@
 import Foundation
 
+/// Lưu lý do không dùng được HLS ở lần thử gần nhất (hiển thị kèm lỗi để dễ chẩn đoán)
+enum HLSDiagnostics {
+    private static let lock = NSLock()
+    private static var _last = "chưa thử"
+    static var last: String {
+        lock.lock(); defer { lock.unlock() }
+        return _last
+    }
+    static func set(_ value: String) {
+        lock.lock(); _last = value; lock.unlock()
+    }
+}
+
 /// Một mức chất lượng trong master playlist HLS
 struct HLSVariant {
     let height: Int

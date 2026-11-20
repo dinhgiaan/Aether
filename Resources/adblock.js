@@ -392,6 +392,8 @@
     // Lấy manifest HLS + metadata từ chính player response mà trang YouTube dùng để phát.
     // HLS không cần PO Token như link googlevideo trực tiếp nên không bị 403.
     async getHLS(videoId) {
+      const diag = [];
+      const sdKeys = (r) => (r && r.streamingData) ? Object.keys(r.streamingData).join('+') : 'none';
       const pick = (r) => {
         if (!r) return null;
         const vid = r.videoDetails && r.videoDetails.videoId;
@@ -408,27 +410,36 @@
       };
 
       // 1. Ưu tiên dữ liệu trang đã nhận sẵn
+      const cachedResp = playerResponsesByVid.get(videoId) || window.__lastPlayerResponse || window.ytInitialPlayerResponse;
       const cached = pick(playerResponsesByVid.get(videoId))
         || pick(window.__lastPlayerResponse)
         || pick(window.ytInitialPlayerResponse);
       if (cached) return cached;
+      diag.push('cache=' + (cachedResp ? 'co(sd:' + sdKeys(cachedResp) + ')' : 'khong'));
 
       // 2. Chưa có: tự gọi player API bằng đúng context của trang (cookie + visitorData hợp lệ)
       try {
         const cfg = window.ytcfg && window.ytcfg.get ? window.ytcfg : null;
         const ctx = cfg && cfg.get('INNERTUBE_CONTEXT');
-        if (!ctx) return null;
+        diag.push('ctx=' + (ctx ? 'co' : 'khong'));
+        if (!ctx) return { hls: null, diag: diag.join(' ') };
         const key = cfg.get('INNERTUBE_API_KEY');
         const res = await fetch('/youtubei/v1/player?prettyPrint=false' + (key ? '&key=' + key : ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ videoId: videoId, context: ctx, contentCheckOk: true, racyCheckOk: true })
         });
-        if (!res.ok) return null;
-        return pick(await res.json());
+        diag.push('http=' + res.status);
+        if (!res.ok) return { hls: null, diag: diag.join(' ') };
+        const r = await res.json();
+        const found = pick(r);
+        if (found) return found;
+        diag.push('ps=' + ((r.playabilityStatus && r.playabilityStatus.status) || '?'));
+        diag.push('sd=' + sdKeys(r));
+        return { hls: null, diag: diag.join(' ') };
       } catch (e) {
-        console.warn('Aether getHLS error:', e);
-        return null;
+        diag.push('loi=' + (e && e.message ? e.message : e));
+        return { hls: null, diag: diag.join(' ') };
       }
     },
     async extractDownloadStreams() {

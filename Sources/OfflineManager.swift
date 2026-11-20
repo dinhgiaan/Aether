@@ -365,7 +365,7 @@ final class OfflineManager: NSObject, ObservableObject {
                     let comps = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
                     let c = comps?.queryItems?.first(where: { $0.name == "c" })?.value ?? "?"
                     let urlIP = NetworkProbe.family(comps?.queryItems?.first(where: { $0.name == "ip" })?.value)
-                    let detail = " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen)) | c=\(c) urlip=\(urlIP) | dl \(probe.info) | player \(NetworkProbe.lastResolve)]"
+                    let detail = " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen)) | c=\(c) urlip=\(urlIP) | dl \(probe.info) | player \(NetworkProbe.lastResolve) | hls: \(HLSDiagnostics.last)]"
                     throw Self.httpError(status, detail: detail)
                 } catch let error as URLError where error.code != .cancelled {
                     // Lỗi mạng tạm thời: thử lại tối đa 2 lần

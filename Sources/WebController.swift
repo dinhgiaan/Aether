@@ -282,15 +282,24 @@ final class WebController: NSObject, ObservableObject {
                 in: nil,
                 contentWorld: .page
             )
-            guard let dict = result as? [String: Any],
-                  let hlsString = dict["hls"] as? String,
-                  let hlsURL = URL(string: hlsString) else { return nil }
+            guard let dict = result as? [String: Any] else {
+                HLSDiagnostics.set("JS không trả dữ liệu (getHLS chưa có trong adblock.js?)")
+                return nil
+            }
+            guard let hlsString = dict["hls"] as? String, let hlsURL = URL(string: hlsString) else {
+                HLSDiagnostics.set("trang không có hlsManifestUrl: \(dict["diag"] as? String ?? "?")")
+                return nil
+            }
 
             let variants = try await HLSParser.variants(masterURL: hlsURL)
             // Ưu tiên >= 720p; nếu video không có thì hiện tất cả mức đang có
             let hd = variants.filter { $0.height >= 720 }
             let chosen = hd.isEmpty ? variants : hd
-            guard !chosen.isEmpty else { return nil }
+            guard !chosen.isEmpty else {
+                HLSDiagnostics.set("master HLS không có mức H.264 nào")
+                return nil
+            }
+            HLSDiagnostics.set("OK \(chosen.count) mức")
 
             let streams = chosen.map { v in
                 StreamOption(
@@ -314,6 +323,7 @@ final class WebController: NSObject, ObservableObject {
             )
         } catch {
             NSLog("Aether HLS resolve error: %@", error.localizedDescription)
+            HLSDiagnostics.set("lỗi đọc HLS: \(error.localizedDescription)")
             return nil
         }
     }
