@@ -40,11 +40,16 @@ final class WebController: NSObject, ObservableObject {
     @Published var showDownloadSheet = false
     @Published var showOfflineLibrary = false
     
-    /// WebView đang hiển thị. Đổi khi thu nhỏ PiP (webViewID đổi theo để SwiftUI nạp lại)
+    /// Container giữ MỌI WKWebView (đang hiển thị / đang PiP / dự phòng).
+    /// Các WebView không bao giờ bị gỡ ra rồi gắn lại → không còn nháy trắng khi thu nhỏ / quay lại từ PiP.
+    let hostView = WebHostView()
+    /// WebView đang hiển thị (nằm trên cùng trong hostView)
     private(set) var webView: WKWebView
-    @Published private(set) var webViewID = UUID()
-    /// WebView đang giữ trang /watch ở chế độ PiP (ẩn phía sau giao diện). nil nếu không có
+    /// WebView đang giữ trang /watch ở chế độ PiP (nằm phía sau giao diện, vẫn "sống"). nil nếu không có
     private(set) var parkedWebView: WKWebView?
+    /// WebView trang duyệt (trang chủ…) nạp sẵn trong lúc xem video, để vuốt xuống là hiện ngay
+    private var spareWebView: WKWebView?
+    private var spareTask: Task<Void, Never>?
     private var lastBrowseURL: URL = Config.home
     private let configuration: WKWebViewConfiguration
     private let contentController = WKUserContentController()
@@ -84,6 +89,7 @@ final class WebController: NSObject, ObservableObject {
         contentController.add(proxy, name: "aetherNav")
 
         configure(webView)
+        hostView.install(webView)
         observeURL()
 
         let nc = NotificationCenter.default
@@ -97,7 +103,7 @@ final class WebController: NSObject, ObservableObject {
         start()
     }
 
-    // MARK: - Quản lý WebView (hiển thị / parked cho PiP)
+    // MARK: - Quản lý WebView (hiển thị / parked cho PiP / spare)
     private func makeWebView() -> WKWebView {
         // Dùng chung configuration (cookie, user scripts, blocklist) → vẫn đăng nhập sẵn
         let wv = WKWebView(frame: .zero, configuration: configuration)
@@ -132,69 +138,93 @@ final class WebController: NSObject, ObservableObject {
         mediaWebView.evaluateJavaScript(js, in: nil, in: .page, completionHandler: nil)
     }
 
-    /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch trong WebView ẩn, mở trang trước đó ở WebView mới.
-    /// Không đụng vào DOM của <video> nên PiP không bị mất hình.
-    func parkCurrentForPiP() {
-        guard parkedWebView == nil, isWatching else { return }
-        let parked = webView
-        parkedWebView = parked
-        webView = makeWebView()
-        webViewID = UUID()
-        observeURL()
-        isWatching = false
-        webView.load(URLRequest(url: lastBrowseURL))
+    /// Dọn một WebView: ngắt mọi liên kết rồi gỡ khỏi host
+    private func tearDown(_ wv: WKWebView, silenceMedia: Bool) {
+        wv.stopLoading()
+        wv.navigationDelegate = nil
+        wv.uiDelegate = nil
+        hostView.remove(wv)
+        if silenceMedia { wv.loadHTMLString("", baseURL: nil) }   // ngắt media chắc chắn
+    }
 
-        // Đợi SwiftUI gỡ WebView cũ khỏi cây view rồi mới gắn vào window (ẩn dưới giao diện)
-        Task { @MainActor [weak self, weak parked] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self, let parked, self.parkedWebView === parked else { return }
-            self.attachBehindUI(parked)
+    // MARK: Spare WebView (trang duyệt nạp sẵn)
+
+    /// Nạp sẵn trang trước đó trong nền khi bắt đầu xem video. Trễ một chút để không tranh băng thông với player.
+    private func scheduleSpare() {
+        guard spareWebView == nil, parkedWebView == nil, spareTask == nil else { return }
+        spareTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.spareTask = nil
+            guard self.isWatching, self.parkedWebView == nil, self.spareWebView == nil else { return }
+            let spare = self.makeWebView()
+            self.hostView.install(spare, behind: true)
+            spare.load(URLRequest(url: self.lastBrowseURL))
+            self.spareWebView = spare
         }
     }
 
-    private func attachBehindUI(_ wv: WKWebView) {
-        let windows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-        guard let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first else { return }
-        wv.removeFromSuperview()
-        wv.frame = window.bounds
-        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        wv.isUserInteractionEnabled = false
-        window.insertSubview(wv, at: 0)   // nằm dưới giao diện SwiftUI, vẫn "sống" để PiP chạy
+    private func discardSpare() {
+        spareTask?.cancel()
+        spareTask = nil
+        guard let spare = spareWebView else { return }
+        spareWebView = nil
+        tearDown(spare, silenceMedia: true)
     }
 
-    /// Nút "quay lại app" của cửa sổ PiP: hoán đổi WebView đang PiP về lại màn hình chính
+    /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch trong WebView phía sau, đưa trang duyệt lên trước.
+    /// Không đụng vào DOM của <video> nên PiP không bị mất hình, và không tạo/gỡ view nào nên không nháy.
+    func parkCurrentForPiP() {
+        guard parkedWebView == nil, isWatching else { return }
+        spareTask?.cancel()
+        spareTask = nil
+
+        let parked = webView
+        let incoming: WKWebView
+        let needsCover: Bool
+        if let spare = spareWebView {
+            incoming = spare            // đã nạp sẵn → hiện ngay, giữ cả vị trí cuộn
+            spareWebView = nil
+            needsCover = false
+        } else {
+            incoming = makeWebView()    // chưa kịp nạp sẵn → tạo mới, che bằng lớp loading
+            hostView.install(incoming, behind: true)
+            incoming.load(URLRequest(url: lastBrowseURL))
+            needsCover = true
+        }
+
+        parkedWebView = parked
+        webView = incoming
+        observeURL()
+        isWatching = false
+        hostView.present(incoming, sending: parked, showCover: needsCover)
+    }
+
+    /// Nút "quay lại app" của cửa sổ PiP: đưa WebView đang PiP lên lại, trang duyệt trở thành spare
     func restoreParked() {
         guard let parked = parkedWebView else { return }
-        let old = webView
+        let browse = webView
         parkedWebView = nil
-        parked.removeFromSuperview()
-        parked.isUserInteractionEnabled = true
         webView = parked
-        webViewID = UUID()
         observeURL()
+        // Trang duyệt cũ giữ nguyên làm spare: lần vuốt xuống kế tiếp hiện ngay, không cần nạp lại
+        discardSpare()
+        spareWebView = browse
+        hostView.present(parked, sending: browse, showCover: false)
         updateWatching()
-        old.stopLoading()
-        old.navigationDelegate = nil
-        old.uiDelegate = nil
-        old.removeFromSuperview()
     }
 
     /// Đóng PiP (nút X, hoặc mở video mới): dừng và huỷ WebView đang giữ
     func destroyParked() {
         guard let parked = parkedWebView else { return }
         parkedWebView = nil
-        parked.stopLoading()
-        parked.navigationDelegate = nil
-        parked.uiDelegate = nil
-        parked.removeFromSuperview()
-        parked.loadHTMLString("", baseURL: nil)   // ngắt media chắc chắn
+        tearDown(parked, silenceMedia: true)
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
         urlObservation?.invalidate()
+        spareTask?.cancel()
     }
 
     func dismissSplash() {
@@ -441,11 +471,16 @@ final class WebController: NSObject, ObservableObject {
         let url = webView.url
         let path = url?.path ?? ""
         // Shorts bị ẩn trên UI — không cần PiP cho /shorts
-        isWatching = path.hasPrefix("/watch")
-        if isWatching {
+        let watching = path.hasPrefix("/watch")
+        if isWatching != watching { isWatching = watching }
+        if watching {
             destroyParked()   // mở video mới → đóng PiP cũ
-        } else if let url, (url.host ?? "").contains("youtube.") {
-            lastBrowseURL = url   // nhớ trang trước khi vào video để quay về đúng chỗ
+            scheduleSpare()
+        } else {
+            discardSpare()    // rời trang video → không cần giữ WebView dự phòng (tiết kiệm RAM)
+            if let url, (url.host ?? "").contains("youtube.") {
+                lastBrowseURL = url   // nhớ trang trước khi vào video để quay về đúng chỗ
+            }
         }
     }
 
@@ -700,25 +735,31 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         dismissSplash()
+        if webView === self.webView { hostView.hideCover() }   // trang duyệt mới nạp xong → bỏ lớp loading
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if webView === parkedWebView { destroyParked(); return }
+        if webView === spareWebView { discardSpare(); return }   // spare chết thì bỏ, không reload ngầm
+        guard webView === self.webView else { return }
         NSLog("Aether: WebContent process terminated, tự động nạp lại...")
         webView.reload()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         dismissSplash()
-        showErrorPageIfNeeded(error: error)
+        if webView === self.webView { hostView.hideCover() }
+        showErrorPageIfNeeded(error: error, in: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         dismissSplash()
-        showErrorPageIfNeeded(error: error)
+        if webView === self.webView { hostView.hideCover() }
+        showErrorPageIfNeeded(error: error, in: webView)
     }
 
-    private func showErrorPageIfNeeded(error: Error) {
+    private func showErrorPageIfNeeded(error: Error, in webView: WKWebView) {
+        guard webView === self.webView else { return }   // chỉ hiện trang lỗi ở WebView đang hiển thị
         let nsErr = error as NSError
         guard nsErr.domain != NSURLErrorDomain || nsErr.code != NSURLErrorCancelled else { return }
         let html = """

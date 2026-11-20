@@ -171,6 +171,8 @@
   };
 
   window.addEventListener('popstate', syncAdSkipper, true);
+  // body chưa tồn tại ở document-start → class ae-watching chưa gắn được khi mở thẳng trang /watch
+  document.addEventListener('DOMContentLoaded', syncAdSkipper, { once: true });
   const origPush = history.pushState.bind(history);
   history.pushState = function (...args) {
     origPush(...args);
@@ -241,13 +243,32 @@
       margin: 0 !important;
     }
 
-    body.ae-watching #player-container-id,
-    body.ae-watching .player-container {
-      position: relative !important;
+    /* Player: GHIM cố định ở đầu màn hình khi cuộn mô tả / bình luận / video đề xuất (giống app YouTube).
+       Trước đây ép position:relative nên video trôi mất khi cuộn. uienhance.js chèn #ae-player-spacer
+       có cùng chiều cao để nội dung bên dưới không bị player đè lên. Bỏ qua khi đang fullscreen. */
+    body.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
+    body.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
+      position: fixed !important;
       top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      width: 100% !important;
       margin: 0 !important;
       padding: 0 !important;
-      width: 100% !important;
+      z-index: 1000 !important;
+      background: #000 !important;
+      /* Chặn trang cuộn theo khi vuốt trên video → cử chỉ vuốt-xuống-thu-nhỏ không bị giành quyền */
+      touch-action: none !important;
+    }
+    #ae-player-spacer { display: block; width: 100%; height: 0; background: #000; pointer-events: none; }
+
+    /* Thanh chip (All / From the series / Related…) không dính cứng ở đầu trang nữa:
+       cuộn tự nhiên cùng danh sách đề xuất thay vì "bật ra" đột ngột khi cuộn xuống */
+    body.ae-watching ytm-chip-cloud-renderer,
+    body.ae-watching ytm-related-chip-cloud-renderer,
+    body.ae-watching .chip-cloud {
+      position: static !important;
+      top: auto !important;
     }
 
     body.ae-watching .watch-below-the-player {
@@ -268,15 +289,9 @@
     ytm-comment-renderer .comment-header {
       margin-bottom: 1px !important;
     }
-    ytm-engagement-panel-section-list-renderer,
-    ytm-comment-section-renderer {
-      transition: transform 0.32s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.22s ease !important;
-      animation: ae-slide-up 0.30s cubic-bezier(0.25, 1, 0.5, 1) both !important;
-    }
-    @keyframes ae-slide-up {
-      from { transform: translateY(100%); opacity: 0; }
-      to   { transform: translateY(0); opacity: 1; }
-    }
+    /* LƯU Ý: không được ép transition/animation lên ytm-engagement-panel-section-list-renderer.
+       Panel (hàng đợi Mix, bình luận…) tự điều khiển đóng/mở bằng transform + transitionend; animation
+       fill-mode:both của ta khoá transform ở translateY(0) và ghi đè transition → đóng bị giật, bấm mở không ăn. */
   `;
   const addStyle = () => {
     if (document.getElementById('ae-adblock-style')) return;
@@ -406,19 +421,22 @@
     // PHẢI được gọi trực tiếp trong touchend (user gesture), nếu không WebKit từ chối PiP.
     minimize() {
       const v = currentVideo();
-      if (!v || !(v.readyState >= 1)) { toast('Chưa có video để thu nhỏ'); return 'no-video'; }
+      // Báo kết quả cho uienhance.js để hoàn tác hiệu ứng kéo video khi PiP thất bại
+      const report = (ok) => { try { window.dispatchEvent(new CustomEvent('ae:minimize-result', { detail: { ok } })); } catch (_) { } };
+      if (!v || !(v.readyState >= 1)) { toast('Chưa có video để thu nhỏ'); report(false); return 'no-video'; }
       const useWK = !!(v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture'));
-      if (!useWK && !v.requestPictureInPicture) { toast('Thiết bị không hỗ trợ PiP'); return 'unsupported'; }
+      if (!useWK && !v.requestPictureInPicture) { toast('Thiết bị không hỗ trợ PiP'); report(false); return 'unsupported'; }
       if (v.paused && !v.ended) { const p = v.play(); if (p && p.catch) p.catch(() => { }); }
       try {
         if (useWK) v.webkitSetPresentationMode('picture-in-picture');
         else { const p = v.requestPictureInPicture(); if (p && p.catch) p.catch(() => { }); }
-      } catch (e) { toast('Không bật được PiP'); return 'error'; }
+      } catch (e) { toast('Không bật được PiP'); report(false); return 'error'; }
 
       waitForPiP(v, 900).then((ok) => {
-        if (!ok) { toast('Không bật được PiP, hãy thử lại'); return; }
+        if (!ok) { toast('Không bật được PiP, hãy thử lại'); report(false); return; }
         window.__aeParked = true;
-        if (!postNav({ action: 'minimizeToPiP', vid: videoIdOf() })) window.__aeParked = false;
+        if (!postNav({ action: 'minimizeToPiP', vid: videoIdOf() })) { window.__aeParked = false; report(false); return; }
+        report(true);
       });
       return 'pending';
     },

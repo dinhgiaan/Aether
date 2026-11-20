@@ -11,67 +11,24 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
 
             // Cử chỉ vuốt xuống từ video được xử lý trong JS (uienhance.js) để có user gesture khi bật PiP
-            WebViewContainer(webView: web.webView)
-                .id(web.webViewID)   // đổi WebView khi thu nhỏ PiP / quay lại từ PiP
+            // Host view giữ mọi WKWebView cố định → hoán đổi PiP chỉ đổi z-order, không dựng lại view (hết nháy)
+            WebViewContainer(host: web.hostView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: .bottom)
 
-            // Nút Tải video nổi ở góc dưới bên phải khi đang xem video (Icon only, chuẩn Liquid-Glass)
+            // Nút Tải video nổi: nhỏ gọn, kéo thả tự do, nhớ vị trí
             if web.isWatching {
                 let currentVidId = web.extractCurrentVideoId() ?? ""
-                let isDownloadingCurrent = offlineManager.activeDownloadProgress[currentVidId] != nil
-                let currentProgress = offlineManager.activeDownloadProgress[currentVidId] ?? 0.0
+                let progress = offlineManager.activeDownloadProgress[currentVidId]
 
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button {
-                            Haptic.feedback(.medium)
-                            if isDownloadingCurrent {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                    web.showOfflineLibrary = true
-                                }
-                            } else {
-                                web.requestDownload()
-                            }
-                        } label: {
-                            ZStack {
-                                if isDownloadingCurrent {
-                                    Circle()
-                                        .trim(from: 0, to: CGFloat(currentProgress))
-                                        .stroke(Color.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                        .rotationEffect(.degrees(-90))
-                                        .frame(width: 38, height: 38)
-                                        .animation(.linear(duration: 0.2), value: currentProgress)
-                                    
-                                    Text("\(Int(currentProgress * 100))%")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(.white)
-                                } else {
-                                    Image(systemName: "arrow.down.to.line")
-                                        .font(.system(size: 19, weight: .bold))
-                                        .foregroundStyle(.white)
-                                }
-                            }
-                            .frame(width: 48, height: 48)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(
-                                        LinearGradient(
-                                            colors: [.white.opacity(0.35), .white.opacity(0.10)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        ),
-                                        lineWidth: 0.8
-                                    )
-                            )
-                            .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
+                FloatingDownloadButton(progress: progress) {
+                    Haptic.feedback(.medium)
+                    if progress != nil {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            web.showOfflineLibrary = true
                         }
-                        .buttonStyle(ScaleButtonStyle())
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 24)
+                    } else {
+                        web.requestDownload()
                     }
                 }
                 .transition(.scale.combined(with: .opacity))
@@ -464,29 +421,11 @@ private struct NetflixSplashView: View {
     }
 }
 
-// MARK: – WKWebView wrapper
-struct WebViewContainer: UIViewRepresentable {
-    let webView: WKWebView
-
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
-}
-
 // MARK: – Haptic Feedback Helper
-private enum Haptic {
+enum Haptic {
     static func feedback(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
         let generator = UIImpactFeedbackGenerator(style: style)
         generator.prepare()
         generator.impactOccurred()
-    }
-}
-
-// MARK: – Tactile Spring Button Style
-private struct ScaleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.90 : 1.0)
-            .opacity(configuration.isPressed ? 0.85 : 1.0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }
