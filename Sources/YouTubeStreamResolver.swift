@@ -89,10 +89,23 @@ final class NetworkProbe: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     }
 }
 
+/// Ghi lại lý do mỗi InnerTube client thất bại/thành công (hiển thị kèm lỗi để dễ chẩn đoán)
+enum ResolveLog {
+    private static let lock = NSLock()
+    private static var entries: [String] = []
+    static var last: String {
+        lock.lock(); defer { lock.unlock() }
+        return entries.isEmpty ? "chưa thử" : entries.joined(separator: ";")
+    }
+    static func reset() { lock.lock(); entries = []; lock.unlock() }
+    static func add(_ value: String) { lock.lock(); entries.append(value); lock.unlock() }
+}
+
 struct YouTubeStreamResolver {
     /// Trích xuất stream trực tiếp (>= 720p). Thử lần lượt từng client, bỏ qua các client trong `excluding`
     /// (dùng khi một client đã bị 403 lúc tải và cần đổi sang client khác).
     static func resolve(videoId: String, excluding: Set<String> = []) async -> VideoDownloadInfo? {
+        ResolveLog.reset()
         for client in InnerTubeClient.all where !excluding.contains(client.name) {
             if let info = await resolve(videoId: videoId, client: client) {
                 return info
@@ -132,11 +145,16 @@ struct YouTubeStreamResolver {
             NetworkProbe.setLastResolve(probe.info)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                ResolveLog.add("\(client.name):http=\((response as? HTTPURLResponse)?.statusCode ?? 0)")
                 return nil
             }
 
             let playability = json["playabilityStatus"] as? [String: Any]
-            guard (playability?["status"] as? String) == "OK" else { return nil }
+            let playStatus = playability?["status"] as? String ?? "?"
+            guard playStatus == "OK" else {
+                ResolveLog.add("\(client.name):ps=\(playStatus)")
+                return nil
+            }
 
             let videoDetails = json["videoDetails"] as? [String: Any] ?? [:]
             let title = videoDetails["title"] as? String ?? "Video"
@@ -214,7 +232,49 @@ struct YouTubeStreamResolver {
                 )))
             }
 
-            guard !options.isEmpty else { return nil }
+            // 4. HLS: không cần GVS PO Token. Client IOS có link trực tiếp luôn bị 403 -> thay bằng HLS;
+            //    client khác chỉ dùng HLS khi không có link trực tiếp nào.
+            if client.name == InnerTubeClient.ios.name || options.isEmpty,
+               let hlsString = streamingData["hlsManifestUrl"] as? String,
+               let hlsURL = URL(string: hlsString) {
+                do {
+                    let variants = try await HLSParser.variants(masterURL: hlsURL, userAgent: client.userAgent)
+                    let hd = variants.filter { $0.height >= 720 }
+                    let hlsOptions: [(height: Int, option: StreamOption)] = (hd.isEmpty ? variants : hd).map { v in
+                        let label: String
+                        switch v.height {
+                        case 2160...: label = "2160p (4K Ultra HD)"
+                        case 1440...: label = "1440p (2K QHD)"
+                        case 1080...: label = "1080p Full HD"
+                        case 720...:  label = "720p HD"
+                        default:      label = "\(v.height)p"
+                        }
+                        return (v.height, StreamOption(
+                            quality: label,
+                            url: v.playlistURL.absoluteString,
+                            audioURL: v.audioPlaylistURL?.absoluteString,
+                            mimeType: "application/vnd.apple.mpegurl",
+                            userAgent: client.userAgent,
+                            clientName: client.name,
+                            isHLS: true
+                        ))
+                    }
+                    if !hlsOptions.isEmpty {
+                        ResolveLog.add("\(client.name):hls=\(hlsOptions.count)")
+                        // IOS: bỏ link trực tiếp vì chắc chắn 403
+                        options = (client.name == InnerTubeClient.ios.name) ? hlsOptions : options + hlsOptions
+                    }
+                } catch {
+                    ResolveLog.add("\(client.name):hlsErr=\(error.localizedDescription)")
+                }
+            } else if client.name == InnerTubeClient.ios.name {
+                ResolveLog.add("\(client.name):noHlsManifest")
+            }
+
+            guard !options.isEmpty else {
+                ResolveLog.add("\(client.name):noStream(adaptive=\(adaptiveFormats.count),prog=\(progressiveFormats.count))")
+                return nil
+            }
 
             // Độ phân giải cao nhất lên đầu (sort theo height thật, không parse từ label)
             options.sort { $0.height > $1.height }
@@ -228,6 +288,7 @@ struct YouTubeStreamResolver {
                 streams: options.map(\.option)
             )
         } catch {
+            ResolveLog.add("\(client.name):err=\(error.localizedDescription)")
             return nil
         }
     }

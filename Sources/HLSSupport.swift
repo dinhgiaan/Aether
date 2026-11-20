@@ -33,10 +33,10 @@ struct HLSPlan {
 }
 
 enum HLSParser {
-    /// Tải nội dung text của playlist (dùng UA Safari giống trang web đang phát)
-    static func fetchText(_ url: URL) async throws -> String {
+    /// Tải nội dung text của playlist. Mặc định dùng UA Safari; link HLS lấy từ InnerTube phải dùng đúng UA của client đó
+    static func fetchText(_ url: URL, userAgent: String = Config.userAgent) async throws -> String {
         var req = URLRequest(url: url)
-        req.setValue(Config.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let text = String(data: data, encoding: .utf8) else {
@@ -80,8 +80,8 @@ enum HLSParser {
     }
 
     /// Đọc master playlist, trả về các mức chất lượng H.264 (mỗi độ phân giải giữ bitrate cao nhất)
-    static func variants(masterURL: URL) async throws -> [HLSVariant] {
-        let text = try await fetchText(masterURL)
+    static func variants(masterURL: URL, userAgent: String = Config.userAgent) async throws -> [HLSVariant] {
+        let text = try await fetchText(masterURL, userAgent: userAgent)
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
 
         // Nhóm âm thanh: GROUP-ID -> URL playlist (ưu tiên DEFAULT=YES)
@@ -142,8 +142,8 @@ enum HLSDownloader {
     }
 
     /// Phân tích media playlist: liệt kê segment cần tải và sinh playlist cục bộ (đường dẫn tương đối)
-    static func plan(playlistURL: URL) async throws -> HLSPlan {
-        let text = try await HLSParser.fetchText(playlistURL)
+    static func plan(playlistURL: URL, userAgent: String = Config.userAgent) async throws -> HLSPlan {
+        let text = try await HLSParser.fetchText(playlistURL, userAgent: userAgent)
         let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
 
         let usesFMP4 = lines.contains { $0.hasPrefix("#EXT-X-MAP:") }
@@ -201,6 +201,7 @@ enum HLSDownloader {
     static func download(
         jobs: [Job],
         maxConcurrent: Int = 4,
+        userAgent: String = Config.userAgent,
         onProgress: @escaping @Sendable (Int, Int) -> Void
     ) async throws {
         let total = jobs.count
@@ -211,7 +212,7 @@ enum HLSDownloader {
             var nextIndex = 0
             while nextIndex < min(maxConcurrent, total) {
                 let job = jobs[nextIndex]
-                group.addTask { try await fetch(job) }
+                group.addTask { try await fetch(job, userAgent: userAgent) }
                 nextIndex += 1
             }
             while try await group.next() != nil {
@@ -219,7 +220,7 @@ enum HLSDownloader {
                 onProgress(done, total)
                 if nextIndex < total {
                     let job = jobs[nextIndex]
-                    group.addTask { try await fetch(job) }
+                    group.addTask { try await fetch(job, userAgent: userAgent) }
                     nextIndex += 1
                 }
             }
@@ -227,13 +228,13 @@ enum HLSDownloader {
     }
 
     /// Tải 1 segment, thử lại tối đa 3 lần
-    private static func fetch(_ job: Job) async throws {
+    private static func fetch(_ job: Job, userAgent: String) async throws {
         var lastError: Error = unsupported("Không tải được segment")
         for attempt in 0..<3 {
             try Task.checkCancellation()
             do {
                 var req = URLRequest(url: job.remote)
-                req.setValue(Config.userAgent, forHTTPHeaderField: "User-Agent")
+                req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
                 let (tmp, response) = try await URLSession.shared.download(for: req)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard status == 200 || status == 206 else {

@@ -174,7 +174,9 @@ final class OfflineManager: NSObject, ObservableObject {
                 duration: duration,
                 videoPlaylist: videoStreamURL,
                 audioPlaylist: audioURLString.flatMap { URL(string: $0) },
-                thumbFileName: thumbFileName
+                thumbFileName: thumbFileName,
+                // HLS lấy từ trang web -> UA Safari; HLS lấy từ InnerTube -> đúng UA của client sinh ra link
+                userAgent: userAgent ?? Config.userAgent
             )
             return
         }
@@ -365,7 +367,7 @@ final class OfflineManager: NSObject, ObservableObject {
                     let comps = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
                     let c = comps?.queryItems?.first(where: { $0.name == "c" })?.value ?? "?"
                     let urlIP = NetworkProbe.family(comps?.queryItems?.first(where: { $0.name == "ip" })?.value)
-                    let detail = " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen)) | c=\(c) urlip=\(urlIP) | dl \(probe.info) | player \(NetworkProbe.lastResolve) | hls: \(HLSDiagnostics.last)]"
+                    let detail = " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen)) | c=\(c) urlip=\(urlIP) | dl \(probe.info) | player \(NetworkProbe.lastResolve) | hls: \(HLSDiagnostics.last) | res: \(ResolveLog.last)]"
                     throw Self.httpError(status, detail: detail)
                 } catch let error as URLError where error.code != .cancelled {
                     // Lỗi mạng tạm thời: thử lại tối đa 2 lần
@@ -392,7 +394,8 @@ final class OfflineManager: NSObject, ObservableObject {
         duration: Double,
         videoPlaylist: URL,
         audioPlaylist: URL?,
-        thumbFileName: String?
+        thumbFileName: String?,
+        userAgent: String
     ) {
         Task {
             let folder = Self.videosDirectory.appendingPathComponent(videoId, isDirectory: true)
@@ -403,11 +406,11 @@ final class OfflineManager: NSObject, ObservableObject {
                 try FileManager.default.createDirectory(at: videoDir, withIntermediateDirectories: true)
 
                 self.activeDownloadStatus[videoId] = "Đang đọc danh sách đoạn video..."
-                let videoPlan = try await HLSDownloader.plan(playlistURL: videoPlaylist)
+                let videoPlan = try await HLSDownloader.plan(playlistURL: videoPlaylist, userAgent: userAgent)
                 var audioPlan: HLSPlan? = nil
                 if let audioPlaylist {
                     try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-                    audioPlan = try await HLSDownloader.plan(playlistURL: audioPlaylist)
+                    audioPlan = try await HLSDownloader.plan(playlistURL: audioPlaylist, userAgent: userAgent)
                 }
 
                 var jobs = videoPlan.items.map {
@@ -419,7 +422,7 @@ final class OfflineManager: NSObject, ObservableObject {
                     }
                 }
 
-                try await HLSDownloader.download(jobs: jobs) { [weak self] done, total in
+                try await HLSDownloader.download(jobs: jobs, userAgent: userAgent) { [weak self] done, total in
                     Task { @MainActor in
                         guard let self else { return }
                         let fraction = Double(done) / Double(max(total, 1))
