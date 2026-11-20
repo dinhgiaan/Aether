@@ -184,10 +184,6 @@
     'ytm-rich-section-renderer:has(ytm-reel-item-renderer)',
     'ytm-reel-item-renderer',
     'ytm-reel-player-overlay-renderer',
-    // Xoá header (logo, search, 3 dots) khi đang xem video
-    'body.ae-watching ytm-mobile-topbar-renderer',
-    'body.ae-watching header.mobile-topbar-header',
-    'body.ae-watching #header-bar',
     // Nút la bàn (Explore) bên cạnh các tags (All, Music...)
     'ytm-chip-cloud-chip-renderer:first-child:has(yt-icon)',
     'ytm-chip-cloud-chip-renderer[chip-style="STYLE_EXPLORE"]',
@@ -203,14 +199,6 @@
   const HIDE_CSS = HIDE.map((s) => s + '{display:none!important}').join('\n');
   const EXTRA_CSS = `
     /* Watch page: Xoá sạch khoảng trống thừa, ẩn placeholder bị trùng lặp */
-    body.ae-watching ytm-mobile-topbar-renderer,
-    body.ae-watching header.mobile-topbar-header,
-    body.ae-watching #header-bar {
-      display: none !important;
-      height: 0 !important;
-      min-height: 0 !important;
-    }
-
     body.ae-watching #app,
     body.ae-watching ytm-app,
     body.ae-watching .page-container,

@@ -544,10 +544,14 @@
       if (tab) tab.style.transform = '';
     }, { passive: true });
 
-    // Tự động đóng PiP cũ khi người dùng bấm xem video mới trong ứng dụng
+    // Tự động đóng PiP cũ và dọn video detached khi người dùng bấm xem video mới trong ứng dụng
     document.addEventListener('click', (e) => {
       const a = e.target.closest('a[href*="/watch"], a[href*="watch?v="]');
       if (a) {
+        const detached = document.documentElement.querySelectorAll(':scope > video');
+        detached.forEach(oldV => {
+          try { oldV.pause(); oldV.remove(); } catch (_) {}
+        });
         const v = document.querySelector('video');
         if (v && v.webkitPresentationMode === 'picture-in-picture') {
           try { v.webkitSetPresentationMode('inline'); } catch (_) {}
