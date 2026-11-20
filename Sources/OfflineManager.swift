@@ -180,11 +180,63 @@ final class OfflineManager: NSObject, ObservableObject {
         }
     }
     
-    // MARK: – Tải dữ liệu từng chunk 1MB với Range Header (UA khớp client + retry khi 403)
+    // MARK: – Tải stream với nhiều chế độ Range (tự leo thang khi bị 403)
+    private enum RangeMode: String {
+        case header   // Range: bytes=a-b (chunk 10MB)
+        case query    // &range=a-b trên URL (cách yt-dlp dùng cho googlevideo)
+        case stream   // 1 request mở "bytes=a-" đọc liên tục, ít request nhất
+    }
+
+    private nonisolated static func httpError(_ status: Int, detail: String = "") -> NSError {
+        NSError(domain: "AetherDownload", code: -2, userInfo: [
+            NSLocalizedDescriptionKey: "Máy chủ từ chối kết nối (HTTP \(status))\(detail)",
+            "httpStatus": status // dùng để quyết định có đổi client hay không
+        ])
+    }
+
+    /// Tải 1 đoạn [start, end] bằng header Range hoặc tham số query `range`
+    private nonisolated static func fetchRange(
+        session: URLSession, url: URL, userAgent: String,
+        start: Int64, end: Int64, mode: RangeMode
+    ) async throws -> (Data, HTTPURLResponse) {
+        var req: URLRequest
+        if mode == .query, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            var items = (comps.queryItems ?? []).filter { $0.name != "range" }
+            items.append(URLQueryItem(name: "range", value: "\(start)-\(end)"))
+            comps.queryItems = items
+            req = URLRequest(url: comps.url ?? url)
+        } else {
+            req = URLRequest(url: url)
+            req.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
+        }
+        // UA PHẢI khớp với client InnerTube đã sinh ra URL
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw httpError(0) }
+        guard http.statusCode == 206 || (http.statusCode == 200 && start == 0) else {
+            throw httpError(http.statusCode)
+        }
+        return (data, http)
+    }
+
+    /// Lấy tổng dung lượng từ Content-Range / Content-Length
+    private nonisolated static func totalLength(from http: HTTPURLResponse, start: Int64) -> Int64 {
+        if let cr = http.value(forHTTPHeaderField: "Content-Range"),
+           let totalStr = cr.components(separatedBy: "/").last, let total = Int64(totalStr) {
+            return total
+        }
+        if let ls = http.value(forHTTPHeaderField: "Content-Length"), let len = Int64(ls) {
+            return start + len
+        }
+        return 0
+    }
+
     private nonisolated func downloadStreamChunked(
         streamURL: URL,
         fileExtension: String,
         userAgent: String,
+        label: String,   // "video" hoặc "audio" – chỉ để hiển thị lỗi dễ chẩn đoán
         onProgress: @escaping @Sendable (Double, Int64, Int64) -> Void
     ) async throws -> URL {
         let destTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_\(UUID().uuidString).\(fileExtension)")
@@ -194,74 +246,96 @@ final class OfflineManager: NSObject, ObservableObject {
             throw NSError(domain: "AetherDownload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không thể khởi tạo file đệm"])
         }
         defer { try? fileHandle.close() }
-        
+
         var clen: Int64 = 0
         if let comps = URLComponents(url: streamURL, resolvingAgainstBaseURL: false),
            let clenStr = comps.queryItems?.first(where: { $0.name == "clen" })?.value,
            let parsed = Int64(clenStr) {
             clen = parsed
         }
-        
-        let chunkSize: Int64 = 1024 * 1024 // 1 MB mỗi chunk
+
+        let chunkSize: Int64 = 10 * 1024 * 1024 // 10MB như yt-dlp: ít request hơn 10 lần so với 1MB
         var startByte: Int64 = 0
         let session = URLSession(configuration: .default)
         defer { session.finishTasksAndInvalidate() }
 
+        let modes: [RangeMode] = [.header, .query, .stream]
+        var modeIndex = 0
+        var attempt = 0
+        var finished = false
+
         do {
-            while clen == 0 || startByte < clen {
-                let endByte = (clen > 0) ? min(startByte + chunkSize - 1, clen - 1) : (startByte + chunkSize - 1)
-                var req = URLRequest(url: streamURL)
-                // UA PHẢI khớp với client InnerTube đã sinh ra URL, nếu không googlevideo trả 403
-                req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-                req.setValue("bytes=\(startByte)-\(endByte)", forHTTPHeaderField: "Range")
+            while !finished && (clen == 0 || startByte < clen) {
+                try Task.checkCancellation()
+                let mode = modes[modeIndex]
+                do {
+                    switch mode {
+                    case .header, .query:
+                        let endByte = (clen > 0) ? min(startByte + chunkSize - 1, clen - 1) : (startByte + chunkSize - 1)
+                        let (data, http) = try await Self.fetchRange(
+                            session: session, url: streamURL, userAgent: userAgent,
+                            start: startByte, end: endByte, mode: mode
+                        )
+                        if clen == 0 { clen = Self.totalLength(from: http, start: startByte) }
+                        if data.isEmpty { finished = true; break }
+                        try fileHandle.write(contentsOf: data)
+                        startByte += Int64(data.count)
+                        onProgress(clen > 0 ? min(1.0, Double(startByte) / Double(clen)) : 0.5, startByte, clen)
 
-                // Retry tối đa 2 lần cho lỗi tạm thời (403 chập chờn từ CDN, 5xx, mất mạng)
-                var attempt = 0
-                var chunk: (Data, HTTPURLResponse)? = nil
-                while chunk == nil {
-                    try Task.checkCancellation()
-                    var status = 0
-                    do {
-                        let (d, r) = try await session.data(for: req)
-                        if let http = r as? HTTPURLResponse {
-                            status = http.statusCode
-                            if status == 206 || status == 200 { chunk = (d, http); break }
+                    case .stream:
+                        var req = URLRequest(url: streamURL)
+                        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+                        req.setValue("bytes=\(startByte)-", forHTTPHeaderField: "Range")
+                        let (bytes, response) = try await session.bytes(for: req)
+                        guard let http = response as? HTTPURLResponse,
+                              http.statusCode == 206 || (http.statusCode == 200 && startByte == 0) else {
+                            throw Self.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
                         }
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        if attempt >= 2 { throw error }
+                        if clen == 0 { clen = Self.totalLength(from: http, start: startByte) }
+                        let before = startByte
+                        var buffer = Data()
+                        buffer.reserveCapacity(256 * 1024)
+                        for try await byte in bytes {
+                            buffer.append(byte)
+                            if buffer.count >= 256 * 1024 {
+                                try fileHandle.write(contentsOf: buffer)
+                                startByte += Int64(buffer.count)
+                                buffer.removeAll(keepingCapacity: true)
+                                onProgress(clen > 0 ? min(1.0, Double(startByte) / Double(clen)) : 0.5, startByte, clen)
+                            }
+                        }
+                        if !buffer.isEmpty {
+                            try fileHandle.write(contentsOf: buffer)
+                            startByte += Int64(buffer.count)
+                            onProgress(clen > 0 ? min(1.0, Double(startByte) / Double(clen)) : 0.5, startByte, clen)
+                        }
+                        // Kết nối đóng mà không nhận thêm byte nào -> coi như bị chặn
+                        if startByte == before { throw Self.httpError(0) }
                     }
-                    guard attempt < 2, status == 0 || status == 403 || status >= 500 else {
-                        throw NSError(domain: "AetherDownload", code: -2, userInfo: [
-                            NSLocalizedDescriptionKey: "Máy chủ từ chối kết nối (HTTP \(status))",
-                            "httpStatus": status // dùng để quyết định có đổi client hay không
-                        ])
+                    attempt = 0
+                } catch let error as NSError where error.domain == "AetherDownload" && error.code == -2 {
+                    let status = error.userInfo["httpStatus"] as? Int ?? 0
+                    guard status == 0 || status == 403 || status >= 500 else { throw error }
+                    // 1) thử lại cùng chế độ 1 lần  2) leo thang sang chế độ Range khác (giữ nguyên phần đã tải)
+                    if attempt < 1 {
+                        attempt += 1
+                        try await Task.sleep(nanoseconds: 800_000_000)
+                        continue
                     }
+                    attempt = 0
+                    if modeIndex < modes.count - 1 {
+                        NSLog("Aether %@: HTTP %d ở %lld bytes (chế độ %@) -> đổi chế độ", label, status, startByte, mode.rawValue)
+                        modeIndex += 1
+                        continue
+                    }
+                    // Hết cách: báo kèm vị trí để chẩn đoán
+                    throw Self.httpError(status, detail: " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen))]")
+                } catch let error as URLError where error.code != .cancelled {
+                    // Lỗi mạng tạm thời: thử lại tối đa 2 lần
+                    if attempt >= 2 { throw error }
                     attempt += 1
-                    try await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000)
+                    try await Task.sleep(nanoseconds: UInt64(attempt) * 800_000_000)
                 }
-                guard let (data, http) = chunk else { break }
-
-                if clen == 0 {
-                    if let contentRange = http.value(forHTTPHeaderField: "Content-Range"),
-                       let totalStr = contentRange.components(separatedBy: "/").last,
-                       let total = Int64(totalStr) {
-                        clen = total
-                    } else if let lengthStr = http.value(forHTTPHeaderField: "Content-Length"),
-                              let len = Int64(lengthStr) {
-                        clen = len
-                    }
-                }
-
-                guard !data.isEmpty else { break }
-                try fileHandle.write(contentsOf: data)
-                startByte += Int64(data.count)
-
-                let progress = (clen > 0) ? Double(startByte) / Double(clen) : 0.5
-                onProgress(min(1.0, progress), startByte, clen)
-
-                if clen > 0 && startByte >= clen { break }
             }
         } catch {
             // Dọn file đệm khi lỗi (fileHandle được đóng bởi defer phía trên)
@@ -288,7 +362,7 @@ final class OfflineManager: NSObject, ObservableObject {
     ) {
         Task {
             do {
-                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent) { [weak self] progress, written, expected in
+                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent, label: "video") { [weak self] progress, written, expected in
                     Task { @MainActor in
                         guard let self = self else { return }
                         self.activeDownloadProgress[videoId] = progress
@@ -356,10 +430,10 @@ final class OfflineManager: NSObject, ObservableObject {
             }
             
             do {
-                async let vTask = self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent) { p, w, t in
+                async let vTask = self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent, label: "video") { p, w, t in
                     vProgress = p; vWritten = w; vTotal = t; updateProgress()
                 }
-                async let aTask = self.downloadStreamChunked(streamURL: audioURL, fileExtension: "m4a", userAgent: userAgent) { p, w, t in
+                async let aTask = self.downloadStreamChunked(streamURL: audioURL, fileExtension: "m4a", userAgent: userAgent, label: "audio") { p, w, t in
                     aProgress = p; aWritten = w; aTotal = t; updateProgress()
                 }
                 
