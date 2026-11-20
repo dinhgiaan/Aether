@@ -14,6 +14,9 @@ struct StreamOption: Identifiable, Codable {
     let url: String
     let audioURL: String?
     let mimeType: String?
+    // UA + tên client đã sinh ra URL này: phải tải bằng đúng UA, nếu không googlevideo trả 403
+    var userAgent: String? = nil
+    var clientName: String? = nil
 }
 
 struct VideoDownloadInfo: Identifiable {
@@ -423,7 +426,12 @@ final class WebController: NSObject, ObservableObject {
                 if let q = s["quality"] as? String, let u = s["url"] as? String {
                     let audioU = s["audioUrl"] as? String
                     let m = s["mimeType"] as? String
-                    streams.append(StreamOption(quality: q, url: u, audioURL: audioU, mimeType: m))
+                    // JS fallback gọi InnerTube client IOS -> tải bằng đúng UA của client IOS
+                    streams.append(StreamOption(
+                        quality: q, url: u, audioURL: audioU, mimeType: m,
+                        userAgent: InnerTubeClient.ios.userAgent,
+                        clientName: InnerTubeClient.ios.name
+                    ))
                 }
             }
         }

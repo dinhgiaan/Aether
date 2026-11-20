@@ -85,9 +85,44 @@ final class OfflineManager: NSObject, ObservableObject {
         duration: Double,
         streamURLString: String,
         audioURLString: String?,
-        thumbnailURLString: String?
+        thumbnailURLString: String?,
+        userAgent: String? = nil,
+        clientName: String? = nil,
+        triedClients: Set<String> = []
     ) {
         guard let videoStreamURL = URL(string: streamURLString) else { return }
+        let ua = userAgent ?? InnerTubeClient.ios.userAgent
+        var tried = triedClients
+        if let clientName { tried.insert(clientName) }
+
+        // Khi bị 403: đổi sang InnerTube client khác (nếu còn) rồi tải lại đúng chất lượng đã chọn
+        let onFailure: (Error) -> Void = { [weak self] error in
+            guard let self else { return }
+            let ns = error as NSError
+            let isForbidden = (ns.userInfo["httpStatus"] as? Int) == 403
+            let remaining = InnerTubeClient.all.filter { !tried.contains($0.name) }
+            guard isForbidden, !remaining.isEmpty else {
+                self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
+                return
+            }
+            self.activeDownloadStatus[videoId] = "Đang thử nguồn khác..."
+            Task { @MainActor in
+                let targetHeight = Int(quality.prefix(while: \.isNumber)) ?? 0
+                guard let info = await YouTubeStreamResolver.resolve(videoId: videoId, excluding: tried),
+                      // chọn stream có độ phân giải gần nhất (không vượt quá) mức đã chọn
+                      let alt = info.streams.first(where: { (Int($0.quality.prefix(while: \.isNumber)) ?? 0) <= targetHeight })
+                              ?? info.streams.last else {
+                    self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
+                    return
+                }
+                self.startDownload(
+                    videoId: videoId, title: title, author: author, quality: alt.quality,
+                    duration: duration, streamURLString: alt.url, audioURLString: alt.audioURL,
+                    thumbnailURLString: thumbnailURLString,
+                    userAgent: alt.userAgent, clientName: alt.clientName, triedClients: tried
+                )
+            }
+        }
         
         let videoFileName = "\(videoId).mp4"
         let destURL = Self.videosDirectory.appendingPathComponent(videoFileName)
@@ -124,7 +159,9 @@ final class OfflineManager: NSObject, ObservableObject {
                 audioURL: audioStreamURL,
                 destURL: destURL,
                 videoFileName: videoFileName,
-                thumbFileName: thumbFileName
+                thumbFileName: thumbFileName,
+                userAgent: ua,
+                onFailure: onFailure
             )
         } else {
             startSingleDownload(
@@ -136,15 +173,18 @@ final class OfflineManager: NSObject, ObservableObject {
                 videoURL: videoStreamURL,
                 destURL: destURL,
                 videoFileName: videoFileName,
-                thumbFileName: thumbFileName
+                thumbFileName: thumbFileName,
+                userAgent: ua,
+                onFailure: onFailure
             )
         }
     }
     
-    // MARK: – Tải dữ liệu từng chunk 1MB với Range Header (Bypass 100% 403 Forbidden của googlevideo)
+    // MARK: – Tải dữ liệu từng chunk 1MB với Range Header (UA khớp client + retry khi 403)
     private nonisolated func downloadStreamChunked(
         streamURL: URL,
         fileExtension: String,
+        userAgent: String,
         onProgress: @escaping @Sendable (Double, Int64, Int64) -> Void
     ) async throws -> URL {
         let destTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_\(UUID().uuidString).\(fileExtension)")
@@ -162,43 +202,73 @@ final class OfflineManager: NSObject, ObservableObject {
             clen = parsed
         }
         
-        let chunkSize: Int64 = 1024 * 1024 // 1 MB per chunk (được YouTube CDN chấp thuận 100%)
+        let chunkSize: Int64 = 1024 * 1024 // 1 MB mỗi chunk
         var startByte: Int64 = 0
         let session = URLSession(configuration: .default)
-        
-        while clen == 0 || startByte < clen {
-            let endByte = (clen > 0) ? min(startByte + chunkSize - 1, clen - 1) : (startByte + chunkSize - 1)
-            var req = URLRequest(url: streamURL)
-            req.setValue("com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
-            req.setValue("bytes=\(startByte)-\(endByte)", forHTTPHeaderField: "Range")
-            
-            let (data, response) = try await session.data(for: req)
-            guard let http = response as? HTTPURLResponse, (http.statusCode == 206 || http.statusCode == 200) else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                throw NSError(domain: "AetherDownload", code: -2, userInfo: [NSLocalizedDescriptionKey: "Máy chủ từ chối kết nối (HTTP \(code))"])
-            }
-            
-            if clen == 0 {
-                if let contentRange = http.value(forHTTPHeaderField: "Content-Range"),
-                   let totalStr = contentRange.components(separatedBy: "/").last,
-                   let total = Int64(totalStr) {
-                    clen = total
-                } else if let lengthStr = http.value(forHTTPHeaderField: "Content-Length"),
-                          let len = Int64(lengthStr) {
-                    clen = len
+        defer { session.finishTasksAndInvalidate() }
+
+        do {
+            while clen == 0 || startByte < clen {
+                let endByte = (clen > 0) ? min(startByte + chunkSize - 1, clen - 1) : (startByte + chunkSize - 1)
+                var req = URLRequest(url: streamURL)
+                // UA PHẢI khớp với client InnerTube đã sinh ra URL, nếu không googlevideo trả 403
+                req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+                req.setValue("bytes=\(startByte)-\(endByte)", forHTTPHeaderField: "Range")
+
+                // Retry tối đa 2 lần cho lỗi tạm thời (403 chập chờn từ CDN, 5xx, mất mạng)
+                var attempt = 0
+                var chunk: (Data, HTTPURLResponse)? = nil
+                while chunk == nil {
+                    try Task.checkCancellation()
+                    var status = 0
+                    do {
+                        let (d, r) = try await session.data(for: req)
+                        if let http = r as? HTTPURLResponse {
+                            status = http.statusCode
+                            if status == 206 || status == 200 { chunk = (d, http); break }
+                        }
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        if attempt >= 2 { throw error }
+                    }
+                    guard attempt < 2, status == 0 || status == 403 || status >= 500 else {
+                        throw NSError(domain: "AetherDownload", code: -2, userInfo: [
+                            NSLocalizedDescriptionKey: "Máy chủ từ chối kết nối (HTTP \(status))",
+                            "httpStatus": status // dùng để quyết định có đổi client hay không
+                        ])
+                    }
+                    attempt += 1
+                    try await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000)
                 }
+                guard let (data, http) = chunk else { break }
+
+                if clen == 0 {
+                    if let contentRange = http.value(forHTTPHeaderField: "Content-Range"),
+                       let totalStr = contentRange.components(separatedBy: "/").last,
+                       let total = Int64(totalStr) {
+                        clen = total
+                    } else if let lengthStr = http.value(forHTTPHeaderField: "Content-Length"),
+                              let len = Int64(lengthStr) {
+                        clen = len
+                    }
+                }
+
+                guard !data.isEmpty else { break }
+                try fileHandle.write(contentsOf: data)
+                startByte += Int64(data.count)
+
+                let progress = (clen > 0) ? Double(startByte) / Double(clen) : 0.5
+                onProgress(min(1.0, progress), startByte, clen)
+
+                if clen > 0 && startByte >= clen { break }
             }
-            
-            guard !data.isEmpty else { break }
-            try fileHandle.write(contentsOf: data)
-            startByte += Int64(data.count)
-            
-            let progress = (clen > 0) ? Double(startByte) / Double(clen) : 0.5
-            onProgress(min(1.0, progress), startByte, clen)
-            
-            if clen > 0 && startByte >= clen { break }
+        } catch {
+            // Dọn file đệm khi lỗi (fileHandle được đóng bởi defer phía trên)
+            try? FileManager.default.removeItem(at: destTempURL)
+            throw error
         }
-        
+
         return destTempURL
     }
 
@@ -212,11 +282,13 @@ final class OfflineManager: NSObject, ObservableObject {
         videoURL: URL,
         destURL: URL,
         videoFileName: String,
-        thumbFileName: String?
+        thumbFileName: String?,
+        userAgent: String,
+        onFailure: @escaping (Error) -> Void
     ) {
         Task {
             do {
-                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4") { [weak self] progress, written, expected in
+                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent) { [weak self] progress, written, expected in
                     Task { @MainActor in
                         guard let self = self else { return }
                         self.activeDownloadProgress[videoId] = progress
@@ -242,7 +314,7 @@ final class OfflineManager: NSObject, ObservableObject {
             } catch {
                 NSLog("Aether single download error: %@", error.localizedDescription)
                 try? FileManager.default.removeItem(at: destURL)
-                self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
+                onFailure(error)
             }
         }
     }
@@ -258,7 +330,9 @@ final class OfflineManager: NSObject, ObservableObject {
         audioURL: URL,
         destURL: URL,
         videoFileName: String,
-        thumbFileName: String?
+        thumbFileName: String?,
+        userAgent: String,
+        onFailure: @escaping (Error) -> Void
     ) {
         Task {
             var vProgress: Double = 0.0
@@ -282,10 +356,10 @@ final class OfflineManager: NSObject, ObservableObject {
             }
             
             do {
-                async let vTask = self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4") { p, w, t in
+                async let vTask = self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent) { p, w, t in
                     vProgress = p; vWritten = w; vTotal = t; updateProgress()
                 }
-                async let aTask = self.downloadStreamChunked(streamURL: audioURL, fileExtension: "m4a") { p, w, t in
+                async let aTask = self.downloadStreamChunked(streamURL: audioURL, fileExtension: "m4a", userAgent: userAgent) { p, w, t in
                     aProgress = p; aWritten = w; aTotal = t; updateProgress()
                 }
                 
@@ -310,7 +384,7 @@ final class OfflineManager: NSObject, ObservableObject {
             } catch {
                 NSLog("Aether dual download error: %@", error.localizedDescription)
                 try? FileManager.default.removeItem(at: destURL)
-                self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
+                onFailure(error)
             }
         }
     }
