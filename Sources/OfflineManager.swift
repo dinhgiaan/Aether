@@ -142,10 +142,10 @@ final class OfflineManager: NSObject, ObservableObject {
     }
     
     // MARK: – Tải dữ liệu từng chunk 1MB với Range Header (Bypass 100% 403 Forbidden của googlevideo)
-    private func downloadStreamChunked(
+    private nonisolated func downloadStreamChunked(
         streamURL: URL,
         fileExtension: String,
-        onProgress: @escaping (Double, Int64, Int64) -> Void
+        onProgress: @escaping @Sendable (Double, Int64, Int64) -> Void
     ) async throws -> URL {
         let destTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ae_dl_\(UUID().uuidString).\(fileExtension)")
         try? FileManager.default.removeItem(at: destTempURL)
@@ -214,14 +214,14 @@ final class OfflineManager: NSObject, ObservableObject {
         videoFileName: String,
         thumbFileName: String?
     ) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self = self else { return }
+        Task {
             do {
-                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4") { progress, written, expected in
+                let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4") { [weak self] progress, written, expected in
                     Task { @MainActor in
+                        guard let self = self else { return }
                         self.activeDownloadProgress[videoId] = progress
-                        let writtenStr = self.formatBytes(written)
-                        let totalStr = expected > 0 ? self.formatBytes(expected) : "..."
+                        let writtenStr = Self.formatBytes(written)
+                        let totalStr = expected > 0 ? Self.formatBytes(expected) : "..."
                         self.activeDownloadStatus[videoId] = "\(writtenStr) / \(totalStr) (\(Int(progress * 100))%)"
                     }
                 }
@@ -230,23 +230,19 @@ final class OfflineManager: NSObject, ObservableObject {
                 try? FileManager.default.removeItem(at: destURL)
                 try FileManager.default.moveItem(at: safeTemp, to: destURL)
                 
-                await MainActor.run {
-                    self.finishDownload(
-                        videoId: videoId,
-                        title: title,
-                        author: author,
-                        quality: quality,
-                        duration: duration,
-                        fileName: videoFileName,
-                        thumbName: thumbFileName
-                    )
-                }
+                self.finishDownload(
+                    videoId: videoId,
+                    title: title,
+                    author: author,
+                    quality: quality,
+                    duration: duration,
+                    fileName: videoFileName,
+                    thumbName: thumbFileName
+                )
             } catch {
                 NSLog("Aether single download error: %@", error.localizedDescription)
                 try? FileManager.default.removeItem(at: destURL)
-                await MainActor.run {
-                    self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
-                }
+                self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
             }
         }
     }
@@ -264,9 +260,7 @@ final class OfflineManager: NSObject, ObservableObject {
         videoFileName: String,
         thumbFileName: String?
     ) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self = self else { return }
-            
+        Task {
             var vProgress: Double = 0.0
             var aProgress: Double = 0.0
             var vWritten: Int64 = 0
@@ -274,13 +268,14 @@ final class OfflineManager: NSObject, ObservableObject {
             var aWritten: Int64 = 0
             var aTotal: Int64 = 0
             
-            let updateProgress: () -> Void = {
-                let combined = (vProgress * 0.88) + (aProgress * 0.12)
-                let writtenTotal = vWritten + aWritten
-                let totalTotal = vTotal + aTotal
-                let writtenStr = self.formatBytes(writtenTotal)
-                let totalStr = totalTotal > 0 ? self.formatBytes(totalTotal) : "..."
+            let updateProgress: @Sendable () -> Void = { [weak self] in
                 Task { @MainActor in
+                    guard let self = self else { return }
+                    let combined = (vProgress * 0.88) + (aProgress * 0.12)
+                    let writtenTotal = vWritten + aWritten
+                    let totalTotal = vTotal + aTotal
+                    let writtenStr = Self.formatBytes(writtenTotal)
+                    let totalStr = totalTotal > 0 ? Self.formatBytes(totalTotal) : "..."
                     self.activeDownloadProgress[videoId] = max(0.02, min(0.94, combined))
                     self.activeDownloadStatus[videoId] = "\(writtenStr) / \(totalStr) (\(Int(combined * 100))%)"
                 }
@@ -296,32 +291,26 @@ final class OfflineManager: NSObject, ObservableObject {
                 
                 let (vTemp, aTemp) = try await (vTask, aTask)
                 
-                await MainActor.run {
-                    self.activeDownloadProgress[videoId] = 0.95
-                    self.activeDownloadStatus[videoId] = "Đang ghép nối & lưu video..."
-                }
+                self.activeDownloadProgress[videoId] = 0.95
+                self.activeDownloadStatus[videoId] = "Đang ghép nối & lưu video..."
                 
                 try await self.muxVideoAndAudio(videoURL: vTemp, audioURL: aTemp, outputURL: destURL)
                 try? FileManager.default.removeItem(at: vTemp)
                 try? FileManager.default.removeItem(at: aTemp)
                 
-                await MainActor.run {
-                    self.finishDownload(
-                        videoId: videoId,
-                        title: title,
-                        author: author,
-                        quality: quality,
-                        duration: duration,
-                        fileName: videoFileName,
-                        thumbName: thumbFileName
-                    )
-                }
+                self.finishDownload(
+                    videoId: videoId,
+                    title: title,
+                    author: author,
+                    quality: quality,
+                    duration: duration,
+                    fileName: videoFileName,
+                    thumbName: thumbFileName
+                )
             } catch {
                 NSLog("Aether dual download error: %@", error.localizedDescription)
                 try? FileManager.default.removeItem(at: destURL)
-                await MainActor.run {
-                    self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
-                }
+                self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
             }
         }
     }
@@ -379,7 +368,7 @@ final class OfflineManager: NSObject, ObservableObject {
     }
     
     // Ghép luồng hình và luồng tiếng native (Passthrough siêu tốc ~0.3s hoặc Re-encode chất lượng cao)
-    private func muxVideoAndAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
+    private nonisolated func muxVideoAndAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws {
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: videoURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let audioAsset = AVURLAsset(url: audioURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
@@ -456,7 +445,7 @@ final class OfflineManager: NSObject, ObservableObject {
         saveVideos()
     }
     
-    private func formatBytes(_ bytes: Int64) -> String {
+    nonisolated static func formatBytes(_ bytes: Int64) -> String {
         guard bytes > 0 else { return "0 MB" }
         let mb = Double(bytes) / (1024 * 1024)
         if mb >= 1000 {
