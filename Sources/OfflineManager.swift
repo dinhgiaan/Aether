@@ -88,28 +88,36 @@ final class OfflineManager: NSObject, ObservableObject {
         thumbnailURLString: String?,
         userAgent: String? = nil,
         clientName: String? = nil,
-        triedClients: Set<String> = []
+        triedClients: Set<String> = [],
+        refreshesLeft: Int = 1             // Số lần được "làm mới URL cùng client" trước khi đổi client
     ) {
         guard let videoStreamURL = URL(string: streamURLString) else { return }
         let ua = userAgent ?? InnerTubeClient.ios.userAgent
         var tried = triedClients
         if let clientName { tried.insert(clientName) }
 
-        // Khi bị 403: đổi sang InnerTube client khác (nếu còn) rồi tải lại đúng chất lượng đã chọn
+        // Khi bị 403: (1) làm mới URL cùng client 1 lần  (2) đổi sang InnerTube client khác
         let onFailure: (Error) -> Void = { [weak self] error in
             guard let self else { return }
             let ns = error as NSError
             let isForbidden = (ns.userInfo["httpStatus"] as? Int) == 403
             let remaining = InnerTubeClient.all.filter { !tried.contains($0.name) }
-            guard isForbidden, !remaining.isEmpty else {
+            let canRefresh = refreshesLeft > 0 && clientName != nil
+            guard isForbidden, canRefresh || !remaining.isEmpty else {
                 self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
                 return
             }
-            self.activeDownloadStatus[videoId] = "Đang thử nguồn khác..."
+            self.activeDownloadStatus[videoId] = canRefresh ? "Đang làm mới liên kết..." : "Đang thử nguồn khác..."
             Task { @MainActor in
                 let targetHeight = Int(quality.prefix(while: \.isNumber)) ?? 0
-                guard let info = await YouTubeStreamResolver.resolve(videoId: videoId, excluding: tried),
-                      // chọn stream có độ phân giải gần nhất (không vượt quá) mức đã chọn
+                let info: VideoDownloadInfo?
+                if canRefresh, let clientName {
+                    info = await YouTubeStreamResolver.resolve(videoId: videoId, clientName: clientName)
+                } else {
+                    info = await YouTubeStreamResolver.resolve(videoId: videoId, excluding: tried)
+                }
+                // Chọn stream có độ phân giải gần nhất (không vượt quá) mức đã chọn
+                guard let info,
                       let alt = info.streams.first(where: { (Int($0.quality.prefix(while: \.isNumber)) ?? 0) <= targetHeight })
                               ?? info.streams.last else {
                     self.failDownload(videoId: videoId, message: "Lỗi tải video: \(error.localizedDescription)")
@@ -119,7 +127,8 @@ final class OfflineManager: NSObject, ObservableObject {
                     videoId: videoId, title: title, author: author, quality: alt.quality,
                     duration: duration, streamURLString: alt.url, audioURLString: alt.audioURL,
                     thumbnailURLString: thumbnailURLString,
-                    userAgent: alt.userAgent, clientName: alt.clientName, triedClients: tried
+                    userAgent: alt.userAgent, clientName: alt.clientName, triedClients: tried,
+                    refreshesLeft: canRefresh ? refreshesLeft - 1 : 1
                 )
             }
         }
@@ -197,7 +206,7 @@ final class OfflineManager: NSObject, ObservableObject {
     /// Tải 1 đoạn [start, end] bằng header Range hoặc tham số query `range`
     private nonisolated static func fetchRange(
         session: URLSession, url: URL, userAgent: String,
-        start: Int64, end: Int64, mode: RangeMode
+        start: Int64, end: Int64, mode: RangeMode, probe: NetworkProbe
     ) async throws -> (Data, HTTPURLResponse) {
         var req: URLRequest
         if mode == .query, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
@@ -212,7 +221,7 @@ final class OfflineManager: NSObject, ObservableObject {
         // UA PHẢI khớp với client InnerTube đã sinh ra URL
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await session.data(for: req, delegate: probe)
         guard let http = response as? HTTPURLResponse else { throw httpError(0) }
         guard http.statusCode == 206 || (http.statusCode == 200 && start == 0) else {
             throw httpError(http.statusCode)
@@ -258,6 +267,7 @@ final class OfflineManager: NSObject, ObservableObject {
         var startByte: Int64 = 0
         let session = URLSession(configuration: .default)
         defer { session.finishTasksAndInvalidate() }
+        let probe = NetworkProbe()
 
         let modes: [RangeMode] = [.header, .query, .stream]
         var modeIndex = 0
@@ -274,7 +284,7 @@ final class OfflineManager: NSObject, ObservableObject {
                         let endByte = (clen > 0) ? min(startByte + chunkSize - 1, clen - 1) : (startByte + chunkSize - 1)
                         let (data, http) = try await Self.fetchRange(
                             session: session, url: streamURL, userAgent: userAgent,
-                            start: startByte, end: endByte, mode: mode
+                            start: startByte, end: endByte, mode: mode, probe: probe
                         )
                         if clen == 0 { clen = Self.totalLength(from: http, start: startByte) }
                         if data.isEmpty { finished = true; break }
@@ -286,7 +296,7 @@ final class OfflineManager: NSObject, ObservableObject {
                         var req = URLRequest(url: streamURL)
                         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
                         req.setValue("bytes=\(startByte)-", forHTTPHeaderField: "Range")
-                        let (bytes, response) = try await session.bytes(for: req)
+                        let (bytes, response) = try await session.bytes(for: req, delegate: probe)
                         guard let http = response as? HTTPURLResponse,
                               http.statusCode == 206 || (http.statusCode == 200 && startByte == 0) else {
                             throw Self.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -329,7 +339,11 @@ final class OfflineManager: NSObject, ObservableObject {
                         continue
                     }
                     // Hết cách: báo kèm vị trí để chẩn đoán
-                    throw Self.httpError(status, detail: " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen))]")
+                    let comps = URLComponents(url: streamURL, resolvingAgainstBaseURL: false)
+                    let c = comps?.queryItems?.first(where: { $0.name == "c" })?.value ?? "?"
+                    let urlIP = NetworkProbe.family(comps?.queryItems?.first(where: { $0.name == "ip" })?.value)
+                    let detail = " [\(label) @ \(Self.formatBytes(startByte)) / \(Self.formatBytes(clen)) | c=\(c) urlip=\(urlIP) | dl \(probe.info) | player \(NetworkProbe.lastResolve)]"
+                    throw Self.httpError(status, detail: detail)
                 } catch let error as URLError where error.code != .cancelled {
                     // Lỗi mạng tạm thời: thử lại tối đa 2 lần
                     if attempt >= 2 { throw error }

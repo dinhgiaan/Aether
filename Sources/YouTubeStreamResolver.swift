@@ -55,6 +55,40 @@ struct InnerTubeClient {
     static let all: [InnerTubeClient] = [.androidVR, .ios]
 }
 
+/// Ghi lại họ địa chỉ IP (v4/v6) mà một request thực sự dùng.
+/// URL googlevideo bị KHÓA theo IP của request "player"; nếu request tải đi bằng họ IP khác -> 403 ngay byte đầu.
+final class NetworkProbe: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var _lastResolve = "?"
+    /// Thông tin mạng của lần gọi "player" gần nhất
+    static var lastResolve: String {
+        lock.lock(); defer { lock.unlock() }
+        return _lastResolve
+    }
+    static func setLastResolve(_ value: String) {
+        lock.lock(); _lastResolve = value; lock.unlock()
+    }
+
+    private let lock = NSLock()
+    private var _info = "?"
+    /// Thông tin mạng của request vừa hoàn tất, dạng "local:v4 remote:v6"
+    var info: String {
+        lock.lock(); defer { lock.unlock() }
+        return _info
+    }
+
+    static func family(_ address: String?) -> String {
+        guard let address else { return "?" }
+        return address.contains(":") ? "v6" : "v4"
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        guard let t = metrics.transactionMetrics.last else { return }
+        let text = "local:\(Self.family(t.localAddress)) remote:\(Self.family(t.remoteAddress))"
+        lock.lock(); _info = text; lock.unlock()
+    }
+}
+
 struct YouTubeStreamResolver {
     /// Trích xuất stream trực tiếp (>= 720p). Thử lần lượt từng client, bỏ qua các client trong `excluding`
     /// (dùng khi một client đã bị 403 lúc tải và cần đổi sang client khác).
@@ -65,6 +99,12 @@ struct YouTubeStreamResolver {
             }
         }
         return nil
+    }
+
+    /// Lấy lại URL mới cho đúng 1 client (URL cũ có thể đã bị khóa vào họ IP sai)
+    static func resolve(videoId: String, clientName: String) async -> VideoDownloadInfo? {
+        guard let client = InnerTubeClient.all.first(where: { $0.name == clientName }) else { return nil }
+        return await resolve(videoId: videoId, client: client)
     }
 
     private static func resolve(videoId: String, client: InnerTubeClient) async -> VideoDownloadInfo? {
@@ -87,7 +127,9 @@ struct YouTubeStreamResolver {
         request.httpBody = bodyData
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let probe = NetworkProbe()
+            let (data, response) = try await URLSession.shared.data(for: request, delegate: probe)
+            NetworkProbe.setLastResolve(probe.info)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return nil
