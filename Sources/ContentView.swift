@@ -14,9 +14,11 @@ struct ContentView: View {
             // Host view giữ mọi WKWebView cố định → hoán đổi PiP chỉ đổi z-order, không dựng lại view (hết nháy)
             WebViewContainer(host: web.hostView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(edges: .bottom)
+                .ignoresSafeArea(edges: web.isFullscreen ? .all : .bottom)   // xoay ngang: phủ kín cả tai thỏ, không còn viền đen 2 bên
 
             // Nút Tải video nổi: nhỏ gọn, kéo thả tự do, nhớ vị trí
+            // Bọc Group để animation CHỈ áp cho nút (trước đây .animation gắn cả ZStack → WebView bị animate khi xoay → giật)
+            Group {
             if web.isWatching && !web.isFullscreen {
                 let currentVidId = web.extractCurrentVideoId() ?? ""
                 let progress = offlineManager.activeDownloadProgress[currentVidId]
@@ -34,6 +36,8 @@ struct ContentView: View {
                 .transition(.scale.combined(with: .opacity))
                 .zIndex(10)
             }
+            }
+            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching && !web.isFullscreen)
 
             // Thanh thông báo tiến trình tải video thời gian thực nổi ở góc trên
             if let activeId = offlineManager.activeDownloadProgress.keys.first,
@@ -122,7 +126,7 @@ struct ContentView: View {
                 .ignoresSafeArea()
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching && !web.isFullscreen)
+        .statusBarHidden(web.isFullscreen)
         .animation(.easeInOut(duration: 0.3), value: showSplash)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: web.showOfflineLibrary)
         .task {

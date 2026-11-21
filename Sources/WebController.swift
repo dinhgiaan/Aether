@@ -40,7 +40,13 @@ final class WebController: NSObject, ObservableObject {
     @Published var showDownloadSheet = false
     @Published var showOfflineLibrary = false
     /// Video đang toàn màn hình (native hoặc xoay ngang) → ẩn nút Tải nổi
-    @Published var isFullscreen = false
+    @Published var isFullscreen = false {
+        didSet {
+            guard isFullscreen != oldValue else { return }
+            // Toàn màn hình: bỏ inset safe-area để video phủ kín chiều ngang (trước đây mất ~44px mỗi bên ở chế độ ngang)
+            webView.scrollView.contentInsetAdjustmentBehavior = isFullscreen ? .never : .automatic
+        }
+    }
     
     /// Container giữ MỌI WKWebView (đang hiển thị / đang PiP / dự phòng).
     /// Các WebView không bao giờ bị gỡ ra rồi gắn lại → không còn nháy trắng khi thu nhỏ / quay lại từ PiP.

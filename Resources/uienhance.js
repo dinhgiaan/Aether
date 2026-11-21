@@ -733,8 +733,13 @@
       !document.fullscreenElement && !document.webkitFullscreenElement;
     if (landscape) b.classList.remove('ae-rot');                 // app đã xoay thật → bỏ xoay giả
     if (!watching) b.classList.remove('ae-rot');
+    const was = b.classList.contains('ae-land');
     b.classList.toggle('ae-land', landscape);
     postFs(landscape || b.classList.contains('ae-rot'));
+    // Đổi hướng → báo YouTube tính lại kích thước player (CSS đã ép đúng, đây chỉ để player nội bộ đồng bộ)
+    if (was !== landscape) [400].forEach((ms) => setTimeout(() => {   // 1 lần, sau khi xoay xong → không thêm tải lúc đang xoay
+      try { window.dispatchEvent(new Event('resize')); } catch (_) { }
+    }, ms));
   };
   window.addEventListener('resize', syncLandscape, { passive: true });
   window.addEventListener('orientationchange', () => setTimeout(syncLandscape, 150), { passive: true });

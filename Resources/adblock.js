@@ -309,6 +309,27 @@
     body.ae-rot.ae-watching #player-container-id video {
       left: 0 !important; top: 0 !important; object-fit: contain !important;
     }
+    /* Root cause video bị phóng to/lệch sau khi thoát fullscreen (dump: video cao 414px trong khung 233px): YouTube đặt
+       width/height/left/top INLINE cho <video> theo kích thước lúc xoay ngang và không tính lại khi quay về dọc.
+       Ở chế độ dọc ta ép khung 16:9 và mọi lớp bên trong lấp đầy khung → luôn đúng, không phụ thuộc inline style của YouTube. */
+    body.ae-watching:not(.ae-land):not(.ae-rot) #player-container-id:not(:fullscreen):not(:-webkit-full-screen) {
+      height: auto !important; aspect-ratio: 16 / 9 !important; max-height: none !important; overflow: hidden !important;
+    }
+    body.ae-watching:not(.ae-land):not(.ae-rot) #player-container-id #player,
+    body.ae-watching:not(.ae-land):not(.ae-rot) #player-container-id .html5-video-container {
+      position: absolute !important; left: 0 !important; top: 0 !important; right: 0 !important; bottom: 0 !important;
+      width: 100% !important; height: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important;
+    }
+    body.ae-watching:not(.ae-land):not(.ae-rot) #player-container-id .html5-video-player {
+      width: 100% !important; height: 100% !important; min-height: 0 !important;
+    }
+    body.ae-watching:not(.ae-land):not(.ae-rot) #player-container-id video {
+      position: absolute !important; left: 0 !important; top: 0 !important;
+      width: 100% !important; height: 100% !important; object-fit: contain !important; transform: none !important;
+    }
+    /* Hiệu ứng "cinematic/ambient" (canvas blur lớn vẽ liên tục theo video) rất tốn GPU → nguồn lag chính khi xem + khi PiP */
+    ytm-cinematic-container-renderer, #player-cinematics-container, .player-cinematics,
+    .below-the-player-cinematic-container { display: none !important; }
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
 
@@ -771,6 +792,12 @@
   let lastFsReq = 0;
   const toggleFs = () => {
     lastFsReq = Date.now();
+    // Xoay/đổi layout khiến iOS đôi khi tự pause video → nhớ trạng thái đang phát và phát lại nếu bị pause "không do người dùng"
+    media.remember();
+    [250, 700, 1400, 2400].forEach((ms) => setTimeout(() => {
+      const v = currentVideo();
+      if (media.wasPlaying && v && v.paused && !v.ended && lastTouch < lastFsReq + 100) media.resume();
+    }, ms));
     if (window.__aeFs && typeof window.__aeFs.toggle === 'function') window.__aeFs.toggle();
   };
   document.addEventListener('click', (e) => {
@@ -816,6 +843,8 @@
     const now = Date.now();
     if (now - lastTouch > 800) lastSystemPause = now;
     if (media.wasPlaying && now < media.keepAliveUntil) setTimeout(() => media.resume(), 60);
+    // Pause xảy ra ngay sau khi bật/tắt fullscreen mà người dùng không chạm thêm → do hệ thống, phát lại
+    else if (media.wasPlaying && now - lastFsReq < 3000 && lastTouch < lastFsReq + 100) setTimeout(() => media.resume(), 60);
     syncNowPlaying();
   }, true);
 
