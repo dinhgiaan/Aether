@@ -110,18 +110,16 @@
       border-radius: 999px !important;
 
       /* Liquid Glass Apple Style */
-      background: rgba(16, 16, 20, 0.72) !important;
-      /* blur nhẹ hơn: blur 40px + saturate trên nội dung đang cuộn rất tốn GPU → lag */
-      backdrop-filter: blur(16px) !important;
-      -webkit-backdrop-filter: blur(16px) !important;
+      /* Nền gần đặc, KHÔNG backdrop-filter: blur realtime trên nội dung đang cuộn là nguồn giật khi lướt feed */
+      background: rgba(18, 18, 22, 0.94) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
       box-shadow:
         inset 0 0.5px 0 rgba(255,255,255,0.12),
-        0 8px 36px rgba(0, 0, 0, 0.65),
-        0 2px 8px rgba(0, 0, 0, 0.35) !important;
+        0 4px 14px rgba(0, 0, 0, 0.5) !important;   /* bóng nhỏ: bóng blur 36px phải vẽ lại mỗi frame cuộn */
 
       overflow: hidden !important;
-      will-change: transform, opacity !important;
       transition:
         transform 0.38s cubic-bezier(0.25, 1, 0.5, 1),
         opacity 0.25s ease !important;
@@ -191,8 +189,8 @@
       animation: ae-fadein 0.2s ease backwards;
     }
     @keyframes ae-fadein {
-      from { opacity: 0; transform: translateY(4px); }
-      to   { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; }   /* chỉ opacity: không tạo transform trên cả danh sách feed */
+      to   { opacity: 1; }
     }
   `;
 
@@ -572,7 +570,6 @@
       const ty = dy < 120 ? dy : 120 + (dy - 120) * 0.35;           // kéo càng xa càng nặng tay
       const p = Math.min(1, dy / 260);
       g.el.style.transform = 'translate3d(0,' + ty.toFixed(1) + 'px,0) scale(' + (1 - p * 0.1).toFixed(3) + ')';
-      g.el.style.opacity = String(1 - p * 0.55);
     };
 
     window.addEventListener('touchstart', (e) => {
@@ -595,7 +592,7 @@
         g.lock = (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) ? 'v' : 'x';   // chỉ nhận vuốt xuống dọc
         if (g.lock === 'v' && g.el) {
           g.el.style.transition = 'none';
-          g.el.style.willChange = 'transform, opacity';
+          g.el.style.willChange = 'transform';
           g.y0 = t.clientY;   // tính từ lúc khoá hướng → video bám ngón tay, không bị giật nhảy ban đầu
         }
       }
@@ -616,9 +613,8 @@
         // Tiếp tục trượt ra rồi mờ hẳn: liền mạch với lúc PiP bật lên
         lastEl = s.el;
         if (s.el) {
-          s.el.style.transition = 'transform .2s cubic-bezier(.4,0,1,1), opacity .2s ease';
+          s.el.style.transition = 'transform .2s cubic-bezier(.4,0,1,1)';
           s.el.style.transform = 'translate3d(0,' + Math.max(160, s.dy) + 'px,0) scale(.88)';
-          s.el.style.opacity = '0';
         }
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
@@ -872,13 +868,28 @@
       if (/^(H1|H2)$/.test(el.tagName)) line += ' "' + (el.textContent || '').trim().slice(0, 30) + '"';
       out.push(line);
       let n = 0;
-      for (const c of el.children) { if (n++ >= 14) { out.push('  '.repeat(depth + 1) + '…'); break; } walk(c, depth + 1); }
+      const cap = /^(LAZY-LIST|YTM-SECTION-LIST-RENDERER)$/.test(el.tagName) ? 3 : 14;
+      for (const c of el.children) { if (n++ >= cap) { out.push('  '.repeat(depth + 1) + '…'); break; } walk(c, depth + 1); }
     };
     const head = 'Aether DOM dump | ' + location.pathname + location.search.slice(0, 40) + ' | win ' + innerWidth + 'x' + innerHeight +
       ' | scrollY ' + Math.round(scrollY) + ' | body.class=' + document.body.className + ' | --ae-pad: ' +
       [...document.querySelectorAll('[style*="padding-top"]')].map((e) => e.tagName.toLowerCase() + ':' + e.style.paddingTop).join(',');
     walk(document.body, 0);
-    let text = head + '\n' + out.join('\n');
+    // Các lớp phủ lớn (bottom sheet, panel, dialog): position fixed/absolute chiếm > 20% màn hình, kèm chuỗi tổ tiên
+    const ov = [];
+    const vw = innerWidth, vh = innerHeight;
+    for (const el of document.body.querySelectorAll('*')) {
+      if (ov.length >= 40) break;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || (cs.position !== 'fixed' && cs.position !== 'absolute')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width * r.height < vw * vh * 0.2 || r.width < 100) continue;
+      const nm = (n) => n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).slice(0, 2).join('.') : '');
+      const chain = []; for (let n = el.parentElement, i = 0; n && i < 3; n = n.parentElement, i++) chain.push(nm(n));
+      ov.push(nm(el) + ' rect[x' + Math.round(r.left) + ' y' + Math.round(r.top) + ' w' + Math.round(r.width) + ' h' + Math.round(r.height) + '] ' +
+        cs.position + ' z:' + cs.zIndex + ' tf:' + (cs.transform === 'none' ? '-' : 'y') + ' vis:' + cs.visibility + ' op:' + cs.opacity + ' <- ' + chain.join(' < '));
+    }
+    let text = head + '\n== OVERLAYS ==\n' + (ov.join('\n') || '(none)') + '\n== TREE ==\n' + out.join('\n');
     if (text.length > 16000) text = text.slice(0, 16000) + '\n…(cắt bớt)';
     return text;
   };
@@ -1068,7 +1079,7 @@
     const observer = new MutationObserver(() => {
       if (moScheduled) return;
       moScheduled = true;
-      const wait = Math.max(0, (location.pathname.startsWith('/watch') ? 250 : 160) - (Date.now() - moLast));
+      const wait = Math.max(0, (location.pathname.startsWith('/watch') ? 250 : 300) - (Date.now() - moLast));
       if (wait > 0) moTimer = setTimeout(runEnhancers, wait);
       else window.requestAnimationFrame(runEnhancers);
     });

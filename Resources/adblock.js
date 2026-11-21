@@ -420,6 +420,7 @@
 
   let lastTouch = 0;
   let lastSystemPause = 0;
+  let lastPipReq = 0;
   window.addEventListener('touchend', () => { lastTouch = Date.now(); }, true);
 
   // ── Âm thanh: nhớ lựa chọn tắt/bật tiếng của người dùng ──────────────────────────────────────────
@@ -530,6 +531,12 @@
       const useWK = !!(v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture'));
       if (!useWK && !v.requestPictureInPicture) { toast('Thiết bị không hỗ trợ PiP'); report(false); return 'unsupported'; }
       if (v.paused && !v.ended) { const p = v.play(); if (p && p.catch) p.catch(() => { }); }
+      // iOS đôi khi pause video lúc chuyển sang PiP → nhớ trạng thái và phát lại nếu bị pause mà người dùng không chạm thêm
+      lastPipReq = Date.now(); this.remember();
+      [300, 800, 1500, 2500].forEach((ms) => setTimeout(() => {
+        const cv = currentVideo();
+        if (media.wasPlaying && cv && cv.paused && !cv.ended && lastTouch < lastPipReq + 100) media.resume();
+      }, ms));
       try {
         if (useWK) v.webkitSetPresentationMode('picture-in-picture');
         else { const p = v.requestPictureInPicture(); if (p && p.catch) p.catch(() => { }); }
@@ -844,7 +851,7 @@
     if (now - lastTouch > 800) lastSystemPause = now;
     if (media.wasPlaying && now < media.keepAliveUntil) setTimeout(() => media.resume(), 60);
     // Pause xảy ra ngay sau khi bật/tắt fullscreen mà người dùng không chạm thêm → do hệ thống, phát lại
-    else if (media.wasPlaying && now - lastFsReq < 3000 && lastTouch < lastFsReq + 100) setTimeout(() => media.resume(), 60);
+    else if (media.wasPlaying && ((now - lastFsReq < 3000 && lastTouch < lastFsReq + 100) || (now - lastPipReq < 3000 && lastTouch < lastPipReq + 100))) setTimeout(() => media.resume(), 60);
     syncNowPlaying();
   }, true);
 
