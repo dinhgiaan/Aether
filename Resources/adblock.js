@@ -282,22 +282,32 @@
     body.ae-land.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-land.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
       top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-      width: auto !important; height: auto !important; max-height: none !important;
+      width: auto !important; height: auto !important; min-height: 0 !important; max-height: none !important;
       z-index: 2147483000 !important;
     }
-    body.ae-land.ae-watching #player-container-id .html5-video-player,
+    /* Dump DOM thật khi xoay ngang: #player / #movie_player / video cao 752px trong khi khung chỉ cao 393px (YouTube đặt
+       kích thước riêng, % của ta không ăn) → video bị tràn và cắt mất phần đáy. Dùng kích thước PX tuyệt đối đo lúc chạy
+       (--ae-w/--ae-h = innerWidth/innerHeight) + xoá min-height/aspect-ratio/padding của YouTube. */
     body.ae-land.ae-watching #player-container-id #player,
+    body.ae-land.ae-watching #player-container-id .html5-video-player,
     body.ae-land.ae-watching #player-container-id .html5-video-container,
-    body.ae-land.ae-watching .player-container .html5-video-player,
-    body.ae-rot.ae-watching #player-container-id .html5-video-player,
+    body.ae-land.ae-watching #player-container-id video,
+    body.ae-land.ae-watching .player-container .html5-video-player {
+      width: var(--ae-w, 100%) !important; height: var(--ae-h, 100%) !important;
+      min-width: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important;
+      aspect-ratio: auto !important; padding: 0 !important; margin: 0 !important;
+    }
     body.ae-rot.ae-watching #player-container-id #player,
-    body.ae-rot.ae-watching #player-container-id .html5-video-container {
-      width: 100% !important; height: 100% !important; max-height: none !important;
+    body.ae-rot.ae-watching #player-container-id .html5-video-player,
+    body.ae-rot.ae-watching #player-container-id .html5-video-container,
+    body.ae-rot.ae-watching #player-container-id video {
+      width: var(--ae-h, 100%) !important; height: var(--ae-w, 100%) !important;
+      min-width: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important;
+      aspect-ratio: auto !important; padding: 0 !important; margin: 0 !important;
     }
     body.ae-land.ae-watching #player-container-id video,
-    body.ae-land.ae-watching .player-container video,
     body.ae-rot.ae-watching #player-container-id video {
-      width: 100% !important; height: 100% !important; left: 0 !important; top: 0 !important; object-fit: contain !important;
+      left: 0 !important; top: 0 !important; object-fit: contain !important;
     }
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
