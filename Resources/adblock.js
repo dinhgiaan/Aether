@@ -154,6 +154,7 @@
     } catch (_) { }
   };
 
+  window.__aeToast = toast;
   const isPiP = (v) => v.webkitPresentationMode === 'picture-in-picture' || document.pictureInPictureElement === v;
   const waitForPiP = (v, ms) => new Promise((resolve) => {
     const t0 = Date.now();
@@ -287,10 +288,7 @@
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
 
-    /* Chừa chỗ cho player đang position:fixed bằng padding-top của body (độc lập cấu trúc DOM của YouTube).
-       Biến --ae-player-h do uienhance.js đo và cập nhật. */
-    body.ae-watching { padding-top: var(--ae-player-h, 0px) !important; box-sizing: border-box; }
-    body.ae-land.ae-watching { padding-top: 0 !important; }
+    /* Chừa chỗ cho player đang position:fixed: uienhance.js tự đo và thêm padding-top vào nhánh nội dung bên dưới. */
     body.ae-land.ae-watching .watch-below-the-player { display: none !important; }   /* giảm tải layout khi xoay ngang */
 
 

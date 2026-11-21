@@ -637,14 +637,21 @@
     });
   })();
 
-  // ── 5c. Player ghim: đo chiều cao player → biến CSS --ae-player-h (adblock.js dùng làm padding-top của body) ──
-  // Không chèn phần tử vào DOM của YouTube nữa: cách cũ (spacer cạnh player) hỏng khi cấu trúc cha của player khác dự đoán,
-  // khiến tên video / kênh / bình luận bị player đè lên và biến mất.
+  // ── 5c. Player ghim: chừa chỗ cho nội dung bên dưới (tự đo & tự hiệu chỉnh) ──────────────────────
+  // Player đang position:fixed nên không còn chiếm chỗ trong luồng trang. Cả spacer lẫn padding của body đều không
+  // chắc đúng vì không biết cấu trúc DOM thật của YouTube (nội dung có thể nằm trong container fixed/absolute riêng).
+  // Cách làm không phụ thuộc cấu trúc: lấy tiêu đề video làm "mốc" → tìm nhánh nội dung chứa nó → thêm padding-top
+  // cho nhánh đó cho tới khi mốc nằm ngay dưới player. Nếu YouTube đã tự chừa chỗ thì không thêm gì (không bị hở).
   const ensurePlayerSpacer = (() => {
-    let ro = null, watched = null, resizeBound = false;
+    let ro = null, watched = null, padEl = null, pad = 0, fixes = 0, lastNav = '';
+    const PROBE = 'h1.slim-video-metadata-title, .slim-video-metadata-title, .ytm-slim-video-information-title, ytm-slim-video-metadata-section-renderer, ytm-slim-video-information-renderer, ytm-slim-owner-renderer, .slim-owner-channel-name';
+    const clearPad = () => { if (padEl) padEl.style.removeProperty('padding-top'); padEl = null; pad = 0; };
+    const setPad = (el, px) => {
+      if (padEl && padEl !== el) padEl.style.removeProperty('padding-top');
+      padEl = el; pad = Math.max(0, Math.round(px));
+      el.style.setProperty('padding-top', pad + 'px', 'important');
+    };
     const measure = (player) => {
-      // Player position:fixed nên offsetHeight có thể = 0 → lấy lớn nhất của container / .html5-video-player / video;
-      // không có thì dùng tỉ lệ 16:9 theo bề rộng.
       const inner = player.querySelector('.html5-video-player');
       const vid = player.querySelector('video');
       let h = Math.max(
@@ -655,15 +662,29 @@
       if (!(h > 20)) h = window.innerWidth * 9 / 16;
       return Math.round(Math.min(h, window.innerHeight * 0.6));
     };
+    const findProbe = (player) => {
+      let p = document.querySelector(PROBE);
+      if (p && !player.contains(p)) return p;
+      for (const el of document.querySelectorAll('h1, h2')) {
+        if (!player.contains(el) && (el.textContent || '').trim().length > 3 && !el.closest('ytm-engagement-panel-section-list-renderer, ytm-comment-section-renderer')) return el;
+      }
+      return null;
+    };
+    // Nhánh con của tổ tiên chung (với player) chứa probe
+    const branchOf = (probe, player) => {
+      let n = probe;
+      while (n && n.parentElement && !n.parentElement.contains(player)) n = n.parentElement;
+      return (n && n !== document.body && n !== document.documentElement && !n.contains(player)) ? n : null;
+    };
     const apply = () => {
       if (!location.pathname.startsWith('/watch')) return;
       if (document.fullscreenElement || document.webkitFullscreenElement) return;
-      if (document.body && document.body.classList.contains('ae-land')) return;   // xoay ngang: giữ nguyên giá trị cũ
+      if (document.body && document.body.classList.contains('ae-land')) return;
+      const nav = location.pathname + location.search;
+      if (nav !== lastNav) { lastNav = nav; fixes = 0; }      // video mới → hiệu chỉnh lại từ đầu
       const player = document.getElementById('player-container-id') || document.querySelector('.player-container');
       if (!player) return;
-      const h = measure(player) + 'px';
-      const root = document.documentElement;
-      if (root.style.getPropertyValue('--ae-player-h') !== h) root.style.setProperty('--ae-player-h', h);
+      const h = measure(player);
       if (typeof ResizeObserver === 'function' && watched !== player) {
         if (ro) ro.disconnect();
         ro = new ResizeObserver(apply);
@@ -672,8 +693,20 @@
         if (inner) ro.observe(inner);
         watched = player;
       }
+      const probe = findProbe(player);
+      if (!probe || window.scrollY > 1) return;                 // chưa có nội dung / đang cuộn: đợi lần sau
+      const branch = branchOf(probe, player);
+      if (!branch) return;
+      if (padEl !== branch) { setPad(branch, 0); }
+      // Mốc đang nằm ở toạ độ trang y; mong muốn y ≈ h (ngay dưới player)
+      const y = probe.getBoundingClientRect().top + window.scrollY;
+      const delta = h - y;
+      if (fixes >= 8) return;
+      if (delta > 3) { fixes++; setPad(branch, pad + delta); requestAnimationFrame(apply); }
+      else if (delta < -40 && pad > 0) { fixes++; setPad(branch, pad + delta + 8); requestAnimationFrame(apply); }   // hở quá lớn → bớt
     };
-    if (!resizeBound) { resizeBound = true; window.addEventListener('resize', () => setTimeout(apply, 120), { passive: true }); }
+    window.addEventListener('resize', () => setTimeout(() => { fixes = 0; apply(); }, 120), { passive: true });
+    apply.reset = clearPad;
     return apply;
   })();
 
@@ -767,6 +800,50 @@
     }).observe(document.body, { childList: true, subtree: true });
   };
 
+  // ── 5e. Gỡ lỗi: giữ 3 ngón tay ~0.7s trên trang → copy sơ đồ DOM vào clipboard để dán gửi lập trình viên ──
+  const dumpDom = () => {
+    const out = [];
+    const SKIP = /^(SCRIPT|STYLE|SVG|PATH|LINK|META|NOSCRIPT|IMG|YT-ICON|C3-ICON)$/i;
+    const walk = (el, depth) => {
+      if (SKIP.test(el.tagName) || depth > 11) return;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none') return;
+      const r = el.getBoundingClientRect();
+      const cls = (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/).slice(0, 3).join('.') : '';
+      let line = '  '.repeat(depth) + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
+      line += ' [' + Math.round(r.top + window.scrollY) + ',' + Math.round(r.height) + ']';
+      if (cs.position !== 'static') line += ' pos:' + cs.position;
+      if (parseFloat(cs.paddingTop) > 0) line += ' pt:' + Math.round(parseFloat(cs.paddingTop));
+      if (/^(H1|H2)$/.test(el.tagName)) line += ' "' + (el.textContent || '').trim().slice(0, 30) + '"';
+      out.push(line);
+      let n = 0;
+      for (const c of el.children) { if (n++ >= 14) { out.push('  '.repeat(depth + 1) + '…'); break; } walk(c, depth + 1); }
+    };
+    const head = 'Aether DOM dump | ' + location.pathname + location.search.slice(0, 40) + ' | win ' + innerWidth + 'x' + innerHeight +
+      ' | scrollY ' + Math.round(scrollY) + ' | body.class=' + document.body.className + ' | --ae-pad: ' +
+      [...document.querySelectorAll('[style*="padding-top"]')].map((e) => e.tagName.toLowerCase() + ':' + e.style.paddingTop).join(',');
+    walk(document.body, 0);
+    let text = head + '\n' + out.join('\n');
+    if (text.length > 16000) text = text.slice(0, 16000) + '\n…(cắt bớt)';
+    return text;
+  };
+  (() => {
+    let timer = 0;
+    window.addEventListener('touchstart', (e) => {
+      clearTimeout(timer);
+      if (e.touches.length !== 3) return;
+      timer = setTimeout(() => {
+        try {
+          const text = dumpDom();
+          window.webkit.messageHandlers.aetherNav.postMessage({ action: 'debugDump', text });
+        } catch (_) { }
+      }, 700);
+    }, { passive: true, capture: true });
+    const stop = () => clearTimeout(timer);
+    window.addEventListener('touchend', stop, { passive: true, capture: true });
+    window.addEventListener('touchcancel', stop, { passive: true, capture: true });
+  })();
+
   // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
   document.addEventListener('DOMContentLoaded', () => {
     let prev = 0;
@@ -829,7 +906,7 @@
         syncLandscape();
         return;
       }
-      document.documentElement.style.removeProperty('--ae-player-h');   // rời trang watch → bỏ chỗ giữ cho player
+      ensurePlayerSpacer.reset();   // rời trang watch → bỏ padding đã thêm
       replaceLogoWithAether();
       cleanProfileMenu();
       removeShortsElements();

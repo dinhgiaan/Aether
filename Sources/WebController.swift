@@ -645,6 +645,15 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                                 if (dict["restore"] as? Bool) == true { target.restoreParked() }
                                 else { target.destroyParked() }
                             }
+                        } else if action == "debugDump" {
+                            // Giữ 3 ngón tay trên trang → copy sơ đồ DOM vào clipboard để dán gửi đi
+                            if let text = dict["text"] as? String {
+                                UIPasteboard.general.string = text
+                                Haptic.feedback(.heavy)
+                                (message.webView ?? target.webView).evaluateJavaScript(
+                                    "window.__aeToast && window.__aeToast('Đã copy sơ đồ trang – hãy dán vào chat');",
+                                    in: nil, in: .page, completionHandler: nil)
+                            }
                         } else if action == "openWatch" {
                             if fromVisible, let str = dict["url"] as? String, let url = URL(string: str),
                                (url.host ?? "").hasSuffix("youtube.com") {
