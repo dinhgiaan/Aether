@@ -109,8 +109,9 @@
 
       /* Liquid Glass Apple Style */
       background: rgba(16, 16, 20, 0.72) !important;
-      backdrop-filter: blur(40px) saturate(1.9) brightness(1.08) !important;
-      -webkit-backdrop-filter: blur(40px) saturate(1.9) brightness(1.08) !important;
+      /* blur nhẹ hơn: blur 40px + saturate trên nội dung đang cuộn rất tốn GPU → lag */
+      backdrop-filter: blur(16px) !important;
+      -webkit-backdrop-filter: blur(16px) !important;
       border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
       box-shadow:
         inset 0 0.5px 0 rgba(255,255,255,0.12),
@@ -157,17 +158,11 @@
     }
 
     /* Ẩn triệt để Shorts Tab và Kệ Reels chuyên biệt */
-    ytm-pivot-bar-item-renderer:has(a[href*="shorts"]),
-    ytm-pivot-bar-item-renderer:has([aria-label*="Shorts"]),
-    ytm-pivot-bar-item-renderer:has([aria-label*="shorts"]),
     ytm-reel-shelf-renderer {
       display: none !important;
     }
 
     /* Đảm bảo phần Recent / Lịch sử xem trong tab Hồ sơ luôn hiển thị đầy đủ */
-    ytm-rich-shelf-renderer:has(a[href*="/watch"]) {
-      display: block !important;
-    }
 
     /* ── Content clearance so floating bar doesn't cover items ──────────── */
     .page-container {
@@ -176,9 +171,7 @@
 
     /* ── Header hiện đại & Logo có lề chuẩn ──────────────────────────────── */
     .mobile-topbar-header, ytm-mobile-topbar-renderer {
-      background: rgba(12, 12, 15, 0.90) !important;
-      backdrop-filter: blur(28px) !important;
-      -webkit-backdrop-filter: blur(28px) !important;
+      background: rgba(12, 12, 15, 0.97) !important;
       border-bottom: 0.5px solid rgba(255, 255, 255, 0.08) !important;
       padding-left: 0 !important;
     }
@@ -644,45 +637,44 @@
     });
   })();
 
-  // ── 5c. Player ghim: spacer giữ chỗ cho nội dung bên dưới (player đang position:fixed, xem adblock.js) ──
+  // ── 5c. Player ghim: đo chiều cao player → biến CSS --ae-player-h (adblock.js dùng làm padding-top của body) ──
+  // Không chèn phần tử vào DOM của YouTube nữa: cách cũ (spacer cạnh player) hỏng khi cấu trúc cha của player khác dự đoán,
+  // khiến tên video / kênh / bình luận bị player đè lên và biến mất.
   const ensurePlayerSpacer = (() => {
     let ro = null, watched = null, resizeBound = false;
-    return () => {
+    const measure = (player) => {
+      // Player position:fixed nên offsetHeight có thể = 0 → lấy lớn nhất của container / .html5-video-player / video;
+      // không có thì dùng tỉ lệ 16:9 theo bề rộng.
+      const inner = player.querySelector('.html5-video-player');
+      const vid = player.querySelector('video');
+      let h = Math.max(
+        player.getBoundingClientRect().height,
+        inner ? inner.getBoundingClientRect().height : 0,
+        vid ? vid.getBoundingClientRect().height : 0
+      );
+      if (!(h > 20)) h = window.innerWidth * 9 / 16;
+      return Math.round(Math.min(h, window.innerHeight * 0.6));
+    };
+    const apply = () => {
       if (!location.pathname.startsWith('/watch')) return;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return;
+      if (document.body && document.body.classList.contains('ae-land')) return;   // xoay ngang: giữ nguyên giá trị cũ
       const player = document.getElementById('player-container-id') || document.querySelector('.player-container');
-      if (!player || !player.parentNode) return;
-      let sp = document.getElementById('ae-player-spacer');
-      if (!sp) { sp = document.createElement('div'); sp.id = 'ae-player-spacer'; }
-      if (sp.nextSibling !== player || sp.parentNode !== player.parentNode) player.parentNode.insertBefore(sp, player);
-      const measure = () => {
-        // Player đang position:fixed nên offsetHeight có thể = 0 (nội dung con định vị tuyệt đối) → lấy lớn nhất của
-        // container / .html5-video-player / video; không có thì dùng tỉ lệ 16:9 theo bề rộng.
-        const hs = [
-          player.getBoundingClientRect().height,
-          player.querySelector('.html5-video-player')?.getBoundingClientRect().height || 0,
-          player.querySelector('video')?.getBoundingClientRect().height || 0
-        ];
-        let h = Math.max(...hs);
-        if (!(h > 20)) h = window.innerWidth * 9 / 16;
-        return Math.round(Math.min(h, window.innerHeight * 0.6));
-      };
-      const sync = () => {
-        if (document.fullscreenElement || document.webkitFullscreenElement) return;   // fullscreen: giữ nguyên
-        if (document.body.classList.contains('ae-land')) return;                      // xoay ngang: giữ nguyên
-        const h = measure();
-        if (sp.style.height !== h + 'px') sp.style.height = h + 'px';
-      };
-      sync();
+      if (!player) return;
+      const h = measure(player) + 'px';
+      const root = document.documentElement;
+      if (root.style.getPropertyValue('--ae-player-h') !== h) root.style.setProperty('--ae-player-h', h);
       if (typeof ResizeObserver === 'function' && watched !== player) {
         if (ro) ro.disconnect();
-        ro = new ResizeObserver(sync);
+        ro = new ResizeObserver(apply);
         ro.observe(player);
         const inner = player.querySelector('.html5-video-player');
         if (inner) ro.observe(inner);
         watched = player;
       }
-      if (!resizeBound) { resizeBound = true; window.addEventListener('resize', () => setTimeout(ensurePlayerSpacer, 0), { passive: true }); }
     };
+    if (!resizeBound) { resizeBound = true; window.addEventListener('resize', () => setTimeout(apply, 120), { passive: true }); }
+    return apply;
   })();
 
   // ── 5c-2. Xoay ngang: bật class ae-land (CSS ở adblock.js làm player phủ kín màn hình) ──
@@ -721,7 +713,7 @@
     if (y < window.innerHeight * 0.6) return;
     let card = null;
     for (const el of document.elementsFromPoint(x, y)) {
-      if (el.closest('#ae-sheet, #ae-toast, #ae-player-spacer')) return;
+      if (el.closest('#ae-sheet, #ae-toast')) return;
       for (let n = el, i = 0; n && n !== document.body && i < 10; n = n.parentElement, i++) {
         const pos = getComputedStyle(n).position;
         if (pos !== 'fixed' && pos !== 'sticky') continue;
@@ -837,7 +829,7 @@
         syncLandscape();
         return;
       }
-      document.getElementById('ae-player-spacer')?.remove();   // rời trang watch → bỏ chỗ giữ cho player
+      document.documentElement.style.removeProperty('--ae-player-h');   // rời trang watch → bỏ chỗ giữ cho player
       replaceLogoWithAether();
       cleanProfileMenu();
       removeShortsElements();
@@ -847,7 +839,7 @@
     const observer = new MutationObserver(() => {
       if (moScheduled) return;
       moScheduled = true;
-      const wait = location.pathname.startsWith('/watch') ? Math.max(0, 250 - (Date.now() - moLast)) : 0;
+      const wait = Math.max(0, (location.pathname.startsWith('/watch') ? 250 : 160) - (Date.now() - moLast));
       if (wait > 0) moTimer = setTimeout(runEnhancers, wait);
       else window.requestAnimationFrame(runEnhancers);
     });

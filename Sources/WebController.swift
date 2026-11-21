@@ -437,7 +437,7 @@ final class WebController: NSObject, ObservableObject {
     func setOrientationLandscape() {
         if #available(iOS 16.0, *) {
             let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight))
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { _ in }
         } else {
             UIDevice.current.setValue(UIInterfaceOrientation.landscapeRight.rawValue, forKey: "orientation")
         }
@@ -446,7 +446,7 @@ final class WebController: NSObject, ObservableObject {
     func setOrientationPortrait() {
         if #available(iOS 16.0, *) {
             let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
         } else {
             UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
         }

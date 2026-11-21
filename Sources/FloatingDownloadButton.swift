@@ -83,7 +83,8 @@ struct FloatingDownloadButton: View {
             }
         }
         .frame(width: diameter, height: diameter)
-        .background(.ultraThinMaterial, in: Circle())
+        // Nền đặc bán trong suốt thay cho .ultraThinMaterial: blur realtime phía trên WebView đang phát video rất tốn GPU
+        .background(Color.black.opacity(0.55), in: Circle())
         .overlay(
             Circle().strokeBorder(
                 LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.10)],

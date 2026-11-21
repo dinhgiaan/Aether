@@ -9,8 +9,12 @@
   const AD_KEY_REGEX = /(^|_)(playerAds|adPlacements?|adSlots?|adBreaks?|adBreakHeartbeatParams|promoted(Video|Sparkles|Item)?|interstitialAds?)($|_)/i;
   const SAFE_EXCLUDE = /^(adaptiveFormats|additionalMetadata)$/i;
 
+  // Tối ưu hiệu năng: trước đây duyệt sâu 8 tầng MỌI kết quả JSON.parse / Response.json (YouTube gọi rất nhiều,
+  // có cái hàng trăm KB) → chiếm main thread gây lag. Các key quảng cáo thực tế chỉ ở 3-4 tầng đầu.
+  const PRUNE_MAX_DEPTH = 4;
+  const AD_TEXT_HINT = /playerAds|adPlacement|adSlots?\b|adBreak|interstitialAds?|promoted(Video|Sparkles|Item)?\b/i;
   const prune = (o, depth = 0) => {
-    if (!o || typeof o !== 'object' || depth > 8) return o;
+    if (!o || typeof o !== 'object' || depth > PRUNE_MAX_DEPTH) return o;
     if (Array.isArray(o)) {
       for (let i = 0; i < o.length; i++) prune(o[i], depth + 1);
       return o;
@@ -33,6 +37,8 @@
     const vid = data.videoDetails?.videoId;
     if (vid) {
       playerResponsesByVid.set(vid, data);
+      // Giới hạn bộ nhớ: mỗi player response rất nặng, chỉ giữ vài video gần nhất
+      if (playerResponsesByVid.size > 6) playerResponsesByVid.delete(playerResponsesByVid.keys().next().value);
     }
   };
 
@@ -44,6 +50,9 @@
         cachePlayerResponse(data);
         window.__lastPlayerResponse = data;
       }
+      // Chuỗi không chứa dấu hiệu quảng cáo → bỏ qua hoàn toàn bước duyệt đối tượng
+      const text = args[0];
+      if (typeof text === 'string' && !AD_TEXT_HINT.test(text)) return data;
       return prune(data);
     } catch (_) {
       return nativeParse.apply(this, args);
@@ -200,10 +209,7 @@
     '.yt-uix-redirect-button', '.open-app-button', 'ytm-open-app-promo-renderer',
     'ytm-app-promo-renderer', '.ytp-webview-open-app-button',
     // Tab Shorts & Giá sách Shorts trên trang chủ / tìm kiếm
-    'ytm-pivot-bar-item-renderer:has([tab-identifier="FEshorts"])',
-    'ytm-pivot-bar-item-renderer:has(a[href*="/shorts"])',
     'ytm-reel-shelf-renderer',
-    'ytm-rich-shelf-renderer:has(ytm-reel-item-renderer)',
     'ytm-rich-section-renderer:has(ytm-reel-shelf-renderer)',
     'ytm-rich-section-renderer:has(ytm-reel-item-renderer)',
     'ytm-reel-item-renderer',
@@ -212,7 +218,6 @@
     'ytm-chip-cloud-chip-renderer:first-child:has(yt-icon)',
     'ytm-chip-cloud-chip-renderer[chip-style="STYLE_EXPLORE"]',
     'ytm-chip-cloud-chip-renderer:has([aria-label*="Explore"])',
-    'ytm-chip-cloud-chip-renderer:has([aria-label*="Khám phá"])',
     // Các button rác trong phần Hồ sơ (Films, Help, Feedback, YouTube Premium)
     'ytm-compact-link-renderer:has(a[href*="/premium"])',
     'ytm-compact-link-renderer:has(a[href*="/storefront"])',
@@ -244,8 +249,8 @@
     }
 
     /* Player: GHIM cố định ở đầu màn hình khi cuộn mô tả / bình luận / video đề xuất (giống app YouTube).
-       Trước đây ép position:relative nên video trôi mất khi cuộn. uienhance.js chèn #ae-player-spacer
-       có cùng chiều cao để nội dung bên dưới không bị player đè lên. Bỏ qua khi đang fullscreen. */
+       Trước đây ép position:relative nên video trôi mất khi cuộn. uienhance.js đo chiều cao player
+       (biến --ae-player-h) để body chừa chỗ, nội dung bên dưới không bị player đè lên. Bỏ qua khi đang fullscreen. */
     body.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
       position: fixed !important;
@@ -282,7 +287,12 @@
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
 
-    #ae-player-spacer { display: block; width: 100%; height: 0; background: #000; pointer-events: none; }
+    /* Chừa chỗ cho player đang position:fixed bằng padding-top của body (độc lập cấu trúc DOM của YouTube).
+       Biến --ae-player-h do uienhance.js đo và cập nhật. */
+    body.ae-watching { padding-top: var(--ae-player-h, 0px) !important; box-sizing: border-box; }
+    body.ae-land.ae-watching { padding-top: 0 !important; }
+    body.ae-land.ae-watching .watch-below-the-player { display: none !important; }   /* giảm tải layout khi xoay ngang */
+
 
     /* Thanh chip (All / From the series / Related…) không dính cứng ở đầu trang nữa:
        cuộn tự nhiên cùng danh sách đề xuất thay vì "bật ra" đột ngột khi cuộn xuống */
@@ -702,43 +712,35 @@
     }
   };
 
-  // ── 5. Hỗ trợ xoay ngang màn hình toàn màn hình (Landscape Fullscreen) ──────
+  // ── 5. Toàn màn hình = xoay ngang app + player phủ kín bằng CSS (class ae-land, xem uienhance.js) ──────
+  // Trước đây dùng webkitEnterFullscreen() (trình phát native của iOS): chuyển cảnh nặng + khi đóng iOS tự pause video,
+  // và còn gọi cả khi xoay máy không có thao tác chạm → hai lần chuyển cảnh chồng nhau gây lag.
+  // Giờ chỉ xoay giao diện: video không bị đụng vào nên không giật, không bị dừng.
+  const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
   document.addEventListener('click', (e) => {
-    const fsBtn = e.target.closest(
-      '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], .icon-button[aria-label*="screen"]'
-    );
-    if (fsBtn) {
-      const v = currentVideo();
-      if (v) {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'enterFullscreen' });
-        } catch (_) { }
-        if (v.webkitEnterFullscreen) {
-          v.webkitEnterFullscreen();
-        }
-      }
-    }
+    if (!location.pathname.startsWith('/watch')) return;
+    const fsBtn = e.target.closest && e.target.closest(FS_SEL);
+    if (!fsBtn || !currentVideo()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    const landscape = window.innerWidth > window.innerHeight;
+    postNav({ action: landscape ? 'exitFullscreen' : 'enterFullscreen' });
   }, true);
 
-  // Khi thoát fullscreen video trên iOS
-  document.addEventListener('webkitendfullscreen', () => {
-    try {
-      window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'exitFullscreen' });
-    } catch (_) { }
+  // Nếu vẫn lọt vào fullscreen native (vd. YouTube tự gọi): iOS pause video khi thoát → tự phát lại
+  let wasPlayingBeforeFS = false;
+  document.addEventListener('webkitbeginfullscreen', (e) => {
+    const v = e.target;
+    wasPlayingBeforeFS = v instanceof HTMLVideoElement && !v.paused;
   }, true);
-
-  // Tự động vào Native iOS Fullscreen khi người dùng xoay ngang điện thoại lúc xem video
-  window.addEventListener('orientationchange', () => {
-    if (location.pathname.startsWith('/watch')) {
-      const isLandscape = Math.abs(window.orientation) === 90;
-      const v = currentVideo();
-      if (isLandscape && v && v.webkitEnterFullscreen && !v.webkitDisplayingFullscreen) {
-        v.webkitEnterFullscreen();
-      }
+  document.addEventListener('webkitendfullscreen', (e) => {
+    postNav({ action: 'exitFullscreen' });
+    const v = e.target;
+    if (wasPlayingBeforeFS && v instanceof HTMLVideoElement) {
+      [60, 250, 600].forEach((ms) => setTimeout(() => { if (v.paused && !v.ended) v.play().catch(() => { }); }, ms));
     }
-  });
+  }, true);
 
   // Lắng nghe trạng thái video để đồng bộ lên Lock Screen
   document.addEventListener('play', (e) => {
