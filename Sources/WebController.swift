@@ -173,7 +173,8 @@ final class WebController: NSObject, ObservableObject {
 
     /// Vuốt từ mép trái: nếu đang ở WebView video mà không còn lịch sử để back → đóng video, về trang duyệt.
     /// (Có lịch sử thì WKWebView tự back bằng cử chỉ của nó.)
-    private func handleEdgeBack() -> Bool {
+    @discardableResult
+    func handleEdgeBack() -> Bool {
         guard webView !== browseWebView, !webView.canGoBack else { return false }
         closeWatch()
         return true
@@ -683,6 +684,9 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                                     "window.__aeToast && window.__aeToast('Đã copy sơ đồ trang – hãy dán vào chat');",
                                     in: nil, in: .page, completionHandler: nil)
                             }
+                        } else if action == "edgeBack" {
+                            // Vuốt từ mép trái (JS bắt được, phòng khi gesture native không nhận)
+                            if fromVisible { target.handleEdgeBack() }
                         } else if action == "openWatch" {
                             if fromVisible, let str = dict["url"] as? String, let url = URL(string: str),
                                (url.host ?? "").hasSuffix("youtube.com") {

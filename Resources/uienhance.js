@@ -578,7 +578,7 @@
     window.addEventListener('touchstart', (e) => {
       g = null;
       if (busy || !location.pathname.startsWith('/watch') || e.touches.length !== 1) return;
-      if (document.body.classList.contains('ae-land')) return;   // xoay ngang: không có cử chỉ thu nhỏ
+      if (inFullscreenMode()) return;   // toàn màn hình: không có cử chỉ thu nhỏ
       const v = document.querySelector('.html5-video-player video, video');
       if (!v || v.webkitDisplayingFullscreen || document.fullscreenElement) return;
       const r = v.getBoundingClientRect();
@@ -678,7 +678,7 @@
     const apply = () => {
       if (!location.pathname.startsWith('/watch')) return;
       if (document.fullscreenElement || document.webkitFullscreenElement) return;
-      if (document.body && document.body.classList.contains('ae-land')) return;
+      if (inFullscreenMode()) return;
       const nav = location.pathname + location.search;
       if (nav !== lastNav) { lastNav = nav; fixes = 0; }      // video mới → hiệu chỉnh lại từ đầu
       const player = document.getElementById('player-container-id') || document.querySelector('.player-container');
@@ -709,22 +709,46 @@
     return apply;
   })();
 
-  // ── 5c-2. Xoay ngang: bật class ae-land (CSS ở adblock.js làm player phủ kín màn hình) ──
+  // ── 5c-2. Fullscreen giả: ae-land (app đã xoay ngang) / ae-rot (xoay player 90° bằng CSS khi app không xoay được) ──
+  let lastFsState = false;
+  const postFs = (on) => {
+    if (on === lastFsState) return;
+    lastFsState = on;
+    try { window.webkit.messageHandlers.aetherNav.postMessage({ isFullscreen: on }); } catch (_) { }
+  };
+  const inFullscreenMode = () => !!document.body && (document.body.classList.contains('ae-land') || document.body.classList.contains('ae-rot'));
   const syncLandscape = () => {
     if (!document.body) return;
+    const b = document.body;
     const v = document.querySelector('video');
     const native = !!(v && v.webkitDisplayingFullscreen);
-    const on = location.pathname.startsWith('/watch') && window.innerWidth > window.innerHeight && !native &&
+    const watching = location.pathname.startsWith('/watch');
+    const landscape = watching && window.innerWidth > window.innerHeight && !native &&
       !document.fullscreenElement && !document.webkitFullscreenElement;
-    const was = document.body.classList.contains('ae-land');
-    document.body.classList.toggle('ae-land', on);
-    if (was !== on) {   // báo Swift để ẩn nút Tải khi đang ở chế độ ngang toàn màn hình
-      try { window.webkit.messageHandlers.aetherNav.postMessage({ isFullscreen: on }); } catch (_) { }
-    }
+    if (landscape) b.classList.remove('ae-rot');                 // app đã xoay thật → bỏ xoay giả
+    if (!watching) b.classList.remove('ae-rot');
+    b.classList.toggle('ae-land', landscape);
+    postFs(landscape || b.classList.contains('ae-rot'));
   };
   window.addEventListener('resize', syncLandscape, { passive: true });
   window.addEventListener('orientationchange', () => setTimeout(syncLandscape, 150), { passive: true });
   window.addEventListener('ae:navigate', syncLandscape);
+  window.__aeFs = {
+    toggle() {
+      const b = document.body;
+      if (!b || !location.pathname.startsWith('/watch')) return;
+      const post = (m) => { try { window.webkit.messageHandlers.aetherNav.postMessage(m); } catch (_) { } };
+      if (b.classList.contains('ae-rot')) { b.classList.remove('ae-rot'); postFs(false); return; }   // thoát xoay giả
+      if (window.innerWidth > window.innerHeight) { post({ action: 'exitFullscreen' }); return; }       // xoay app về dọc
+      post({ action: 'enterFullscreen' });                                                              // xin xoay app sang ngang
+      // Nếu app không xoay được (vd. chạy trong LiveContainer) → xoay player 90° bằng CSS
+      setTimeout(() => {
+        if (location.pathname.startsWith('/watch') && window.innerWidth <= window.innerHeight) {
+          b.classList.add('ae-rot'); postFs(true);
+        }
+      }, 900);
+    }
+  };
 
   // ── 5c-3. Bấm video ở trang duyệt → mở ở WebView riêng (giữ nguyên trang chủ phía sau) ────────
   window.addEventListener('click', (e) => {
@@ -863,6 +887,100 @@
     window.addEventListener('touchcancel', stop, { passive: true, capture: true });
   })();
 
+  // ── 5f. Animation mở/đóng panel hàng đợi Mix ─────────────────────────────────────────────────────
+  // Chỉ dùng WAAPI trên thuộc tính `translate`/`opacity` (KHÔNG fill, KHÔNG đổi transform/transition của YouTube) nên
+  // không phá cơ chế đóng/mở riêng của panel như animation CSS ép cứng trước đây.
+  // Mở: phần tử panel xuất hiện → trượt lên + hiện dần. Đóng: panel biến mất → dựng bản sao tĩnh trượt xuống + mờ dần.
+  const ensurePanelAnimator = (() => {
+    let host = null, mo = null, prev = [], snaps = [], raf = 0, snapTimer = 0;
+    const HOST_SEL = 'ytm-playlist-engagement-panel';
+    const OUT_MS = 230, IN_MS = 300;
+    // Phần tử "panel" đang hiển thị trong host: cao > 150px, rộng gần hết màn hình, loại thẻ thu gọn + lớp nền của nó
+    const visiblePanels = () => {
+      const out = [];
+      for (const el of host.querySelectorAll('*')) {
+        if (el.closest('ytm-playlist-panel-entry-point') || el.classList.contains('playlist-entrypoint-background-protection')) continue;
+        if (out.some((o) => o.contains(el))) continue;                        // chỉ lấy phần tử ngoài cùng
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if (r.height > 150 && r.width > window.innerWidth * 0.8) out.push(el);
+      }
+      return out;
+    };
+    const isScrim = (el) => el.getBoundingClientRect().height >= window.innerHeight * 0.9 && !el.querySelector('ytm-playlist-panel-renderer, ytm-engagement-panel-section-list-renderer');
+    const animateIn = (el) => {
+      if (typeof el.animate !== 'function') return;
+      const frames = isScrim(el) ? [{ opacity: 0 }, { opacity: 1 }] : [{ translate: '0 36px', opacity: 0 }, { translate: '0 0', opacity: 1 }];
+      el.animate(frames, { duration: IN_MS, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    };
+    const takeSnapshots = (els) => {
+      snaps = els.map((el) => ({ parent: el.parentNode, clone: el.cloneNode(true), scrim: isScrim(el) }));
+    };
+    const animateOut = () => {
+      const list = snaps; snaps = [];
+      list.forEach(({ parent, clone, scrim }) => {
+        if (!parent || !parent.isConnected || typeof clone.animate !== 'function') return;
+        clone.style.pointerEvents = 'none';
+        clone.removeAttribute('id');
+        parent.appendChild(clone);
+        const frames = scrim ? [{ opacity: 1 }, { opacity: 0 }] : [{ translate: '0 0', opacity: 1 }, { translate: '0 36px', opacity: 0 }];
+        const a = clone.animate(frames, { duration: OUT_MS, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' });
+        const done = () => clone.remove();
+        a.onfinish = done; a.oncancel = done;
+        setTimeout(done, OUT_MS + 200);
+      });
+    };
+    const check = () => {
+      raf = 0;
+      if (!host || !host.isConnected) return;
+      const now = visiblePanels();
+      if (!prev.length && now.length) {                         // vừa mở
+        now.forEach(animateIn);
+        clearTimeout(snapTimer);
+        snapTimer = setTimeout(() => { const cur = visiblePanels(); if (cur.length) takeSnapshots(cur); }, IN_MS + 80);
+      } else if (prev.length && !now.length) {                  // vừa đóng
+        clearTimeout(snapTimer);
+        animateOut();
+      }
+      prev = now;
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(check); };
+    return () => {
+      if (!location.pathname.startsWith('/watch')) { host = null; prev = []; snaps = []; if (mo) { mo.disconnect(); mo = null; } return; }
+      const h = document.querySelector(HOST_SEL);
+      if (!h || h === host) return;
+      host = h; snaps = [];
+      prev = visiblePanels();                                  // trạng thái ban đầu: không animate
+      if (prev.length) takeSnapshots(prev);
+      if (mo) mo.disconnect();
+      mo = new MutationObserver(schedule);
+      mo.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'opened', 'expanded'] });
+    };
+  })();
+
+  // ── 5g. Vuốt từ mép trái → quay lại (JS dự phòng cho cử chỉ native): đóng video, về trang trước ─────
+  (() => {
+    let s = null;
+    window.addEventListener('touchstart', (e) => {
+      s = null;
+      if (e.touches.length !== 1 || !location.pathname.startsWith('/watch')) return;
+      if (inFullscreenMode()) return;
+      const t = e.touches[0];
+      if (t.clientX <= 24) s = { x: t.clientX, y: t.clientY, t0: Date.now() };
+    }, { passive: true, capture: true });
+    window.addEventListener('touchend', (e) => {
+      const st = s; s = null;
+      if (!st || !e.changedTouches.length) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - st.x, dy = Math.abs(t.clientY - st.y);
+      if (dx > 70 && dy < 80 && Date.now() - st.t0 < 800) {
+        try { window.webkit.messageHandlers.aetherNav.postMessage({ action: 'edgeBack' }); } catch (_) { }
+      }
+    }, { passive: true, capture: true });
+    window.addEventListener('touchcancel', () => { s = null; }, { passive: true, capture: true });
+  })();
+
   // ── 6. Tối ưu Bottom bar: 120Hz mượt mà với requestAnimationFrame ─────────
   document.addEventListener('DOMContentLoaded', () => {
     let prev = 0;
@@ -911,6 +1029,8 @@
 
     refreshUI();
     ensurePlayerSpacer();
+    ensurePanelAnimator();
+    window.addEventListener('ae:navigate', () => setTimeout(ensurePanelAnimator, 400));
     observeReplies();
 
     // MutationObserver: khi đang xem video YouTube đổi DOM liên tục (thanh tiến trình, bình luận…).
@@ -923,6 +1043,7 @@
         removeShortsElements();
         ensurePlayerSpacer();
         syncLandscape();
+        ensurePanelAnimator();
         return;
       }
       ensurePlayerSpacer.reset();   // rời trang watch → bỏ padding đã thêm

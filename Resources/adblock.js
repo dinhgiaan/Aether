@@ -268,7 +268,15 @@
     }
     /* Xoay ngang: player phủ kín màn hình (iOS không cho script tự vào fullscreen nếu không có chạm,
        nên dùng "fullscreen giả" bằng CSS; class ae-land do uienhance.js bật khi width > height) */
-    body.ae-land.ae-watching { overflow: hidden !important; }
+    body.ae-land.ae-watching, body.ae-rot.ae-watching { overflow: hidden !important; }
+    /* ae-rot: không xoay được app → xoay player 90° bằng CSS (kích thước hoán đổi vw/vh) */
+    body.ae-rot.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
+    body.ae-rot.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
+      top: 0 !important; left: 0 !important; right: auto !important; bottom: auto !important;
+      width: 100vh !important; height: 100vw !important; max-height: none !important;
+      transform-origin: 0 0 !important; transform: translateX(100vw) rotate(90deg) !important;
+      z-index: 2147483000 !important;
+    }
     body.ae-land.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-land.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
       top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
@@ -278,18 +286,22 @@
     body.ae-land.ae-watching #player-container-id .html5-video-player,
     body.ae-land.ae-watching #player-container-id #player,
     body.ae-land.ae-watching #player-container-id .html5-video-container,
-    body.ae-land.ae-watching .player-container .html5-video-player {
+    body.ae-land.ae-watching .player-container .html5-video-player,
+    body.ae-rot.ae-watching #player-container-id .html5-video-player,
+    body.ae-rot.ae-watching #player-container-id #player,
+    body.ae-rot.ae-watching #player-container-id .html5-video-container {
       width: 100% !important; height: 100% !important; max-height: none !important;
     }
     body.ae-land.ae-watching #player-container-id video,
-    body.ae-land.ae-watching .player-container video {
+    body.ae-land.ae-watching .player-container video,
+    body.ae-rot.ae-watching #player-container-id video {
       width: 100% !important; height: 100% !important; left: 0 !important; top: 0 !important; object-fit: contain !important;
     }
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
 
     /* Chừa chỗ cho player đang position:fixed: uienhance.js tự đo và thêm padding-top vào nhánh nội dung bên dưới. */
-    body.ae-land.ae-watching .watch-below-the-player { display: none !important; }   /* giảm tải layout khi xoay ngang */
+    body.ae-land.ae-watching .watch-below-the-player, body.ae-rot.ae-watching .watch-below-the-player { display: none !important; }   /* giảm tải layout khi xoay ngang */
 
 
     /* Thanh chip (All / From the series / Related…) không dính cứng ở đầu trang nữa:
@@ -738,21 +750,16 @@
     }
   };
 
-  // ── 5. Toàn màn hình ─────────────────────────────────────────────────────────────────────────────
-  // Root cause video bị lệch / cắt đáy: giao diện player mới của YouTube dùng class khác nên selector nút fullscreen cũ
-  // không khớp → YouTube tự vào fullscreen PHẦN TỬ, tính kích thước video lúc đang xoay máy (số liệu cũ) rồi không tính lại.
-  // Giờ: bấm nút fullscreen → dùng trình phát fullscreen NATIVE của iOS (luôn đúng kích thước, tự xoay ngang, không phải
-  // xoay cả app nên không lag). iOS tự pause video khi thoát → ta tự phát lại. Báo trạng thái cho Swift để ẩn nút Tải.
+  // ── 5. Toàn màn hình = "fullscreen giả": xoay app sang ngang + player phủ kín bằng CSS ──────────────
+  // - Không dùng trình phát fullscreen native của iOS: nó tự pause video khi thoát (video đứng hình ~0.5-0.8s, nút play
+  //   hiện loading) và không tự xoay ngang trong app này.
+  // - Video không bị đụng vào nên thoát ra phát liền mạch, không dừng.
+  // - Class ae-land (app đã xoay ngang) hoặc ae-rot (không xoay được → xoay player 90° bằng CSS) do uienhance.js quản lý.
   const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, .ytwPlayerBottomControlsFullscreenButtonWrapper, .player-controls-bottom-right, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
   let lastFsReq = 0;
-  // Vào fullscreen native; không được thì dùng "fullscreen giả" (xoay app + CSS ae-land)
-  const enterFs = () => {
+  const toggleFs = () => {
     lastFsReq = Date.now();
-    const v = currentVideo();
-    if (v && v.webkitSupportsFullscreen !== false && typeof v.webkitEnterFullscreen === 'function') {
-      try { v.webkitEnterFullscreen(); return; } catch (_) { }
-    }
-    postNav({ action: 'enterFullscreen' });
+    if (window.__aeFs && typeof window.__aeFs.toggle === 'function') window.__aeFs.toggle();
   };
   document.addEventListener('click', (e) => {
     if (!location.pathname.startsWith('/watch')) return;
@@ -761,19 +768,17 @@
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    const v = currentVideo();
-    if (v && v.webkitDisplayingFullscreen) { try { v.webkitExitFullscreen(); } catch (_) { } return; }
-    if (window.innerWidth > window.innerHeight) { lastFsReq = Date.now(); postNav({ action: 'exitFullscreen' }); return; }   // đang "fullscreen giả"
-    enterFs();
+    toggleFs();
   }, true);
-  // YouTube tự vào fullscreen phần tử (nút không khớp selector): thoát ngay, đổi sang fullscreen native
+  // YouTube tự vào fullscreen phần tử (nút không khớp selector / cử chỉ vuốt lên): thoát ngay, đổi sang fullscreen giả
   ['fullscreenchange', 'webkitfullscreenchange'].forEach((t) => document.addEventListener(t, () => {
     if (!location.pathname.startsWith('/watch')) return;
     if (!(document.fullscreenElement || document.webkitFullscreenElement)) return;
     try { (document.exitFullscreen || document.webkitExitFullscreen || function () { }).call(document); } catch (_) { }
-    if (Date.now() - lastFsReq > 700) enterFs();
+    if (Date.now() - lastFsReq > 700) toggleFs();
   }, true));
 
+  // Nếu vẫn lọt vào fullscreen native (vd. webkitEnterFullscreen từ nơi khác): iOS pause khi thoát → phát lại ngay
   let wasPlayingBeforeFS = false;
   document.addEventListener('webkitbeginfullscreen', (e) => {
     const v = e.target;
@@ -784,10 +789,9 @@
     postNav({ isFullscreen: false });
     const v = e.target;
     if (wasPlayingBeforeFS && v instanceof HTMLVideoElement) {
-      [60, 250, 600, 1200].forEach((ms) => setTimeout(() => { if (v.paused && !v.ended) v.play().catch(() => { }); }, ms));
+      v.play().catch(() => { });
+      [60, 250, 600].forEach((ms) => setTimeout(() => { if (v.paused && !v.ended) v.play().catch(() => { }); }, ms));
     }
-    // Bố cục trang sau khi thoát: để uienhance.js đo lại chiều cao player
-    setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch (_) { } }, 350);
   }, true);
 
   // Lắng nghe trạng thái video để đồng bộ lên Lock Screen
