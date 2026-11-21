@@ -717,8 +717,14 @@
     try { window.webkit.messageHandlers.aetherNav.postMessage({ isFullscreen: on }); } catch (_) { }
   };
   const inFullscreenMode = () => !!document.body && (document.body.classList.contains('ae-land') || document.body.classList.contains('ae-rot'));
+  const setViewVars = () => {   // kích thước vùng nhìn thấy THẬT (innerWidth/innerHeight), dùng cho fullscreen xoay giả
+    const r = document.documentElement.style;
+    r.setProperty('--ae-w', window.innerWidth + 'px');
+    r.setProperty('--ae-h', window.innerHeight + 'px');
+  };
   const syncLandscape = () => {
     if (!document.body) return;
+    setViewVars();
     const b = document.body;
     const v = document.querySelector('video');
     const native = !!(v && v.webkitDisplayingFullscreen);
@@ -740,11 +746,12 @@
       const post = (m) => { try { window.webkit.messageHandlers.aetherNav.postMessage(m); } catch (_) { } };
       if (b.classList.contains('ae-rot')) { b.classList.remove('ae-rot'); postFs(false); return; }   // thoát xoay giả
       if (window.innerWidth > window.innerHeight) { post({ action: 'exitFullscreen' }); return; }       // xoay app về dọc
+      setViewVars();
       post({ action: 'enterFullscreen' });                                                              // xin xoay app sang ngang
       // Nếu app không xoay được (vd. chạy trong LiveContainer) → xoay player 90° bằng CSS
       setTimeout(() => {
         if (location.pathname.startsWith('/watch') && window.innerWidth <= window.innerHeight) {
-          b.classList.add('ae-rot'); postFs(true);
+          setViewVars(); b.classList.add('ae-rot'); postFs(true);
         }
       }, 900);
     }

@@ -273,14 +273,16 @@
     body.ae-rot.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-rot.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
       top: 0 !important; left: 0 !important; right: auto !important; bottom: auto !important;
-      width: 100vh !important; height: 100vw !important; max-height: none !important;
-      transform-origin: 0 0 !important; transform: translateX(100vw) rotate(90deg) !important;
+      width: var(--ae-h, 100vh) !important; height: var(--ae-w, 100vw) !important; max-height: none !important;
+      transform-origin: 0 0 !important; transform: translateX(var(--ae-w, 100vw)) rotate(90deg) !important;
       z-index: 2147483000 !important;
     }
+    /* Root cause video mất phần đáy: 100vh trong WKWebView có thể LỚN hơn vùng nhìn thấy thật (trừ safe-area/home indicator).
+       Dùng position:fixed + 4 cạnh = 0 (kích thước auto) → luôn vừa đúng vùng nhìn thấy, không phụ thuộc vh. */
     body.ae-land.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-land.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
       top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-      width: 100vw !important; height: 100vh !important; max-height: none !important;
+      width: auto !important; height: auto !important; max-height: none !important;
       z-index: 2147483000 !important;
     }
     body.ae-land.ae-watching #player-container-id .html5-video-player,
