@@ -655,13 +655,9 @@
       el.style.setProperty('padding-top', pad + 'px', 'important');
     };
     const measure = (player) => {
-      const inner = player.querySelector('.html5-video-player');
-      const vid = player.querySelector('video');
-      let h = Math.max(
-        player.getBoundingClientRect().height,
-        inner ? inner.getBoundingClientRect().height : 0,
-        vid ? vid.getBoundingClientRect().height : 0
-      );
+      // Dump DOM thật cho thấy #player-container-id có chiều cao đúng → dùng thẳng; chỉ khi bất thường mới dự phòng 16:9.
+      // (Không lấy max với video/inner nữa: ngay sau khi thoát fullscreen chúng còn kích thước cũ → pad bị phình gấp đôi.)
+      let h = player.getBoundingClientRect().height;
       if (!(h > 20)) h = window.innerWidth * 9 / 16;
       return Math.round(Math.min(h, window.innerHeight * 0.6));
     };
@@ -701,14 +697,14 @@
       const branch = branchOf(probe, player);
       if (!branch) return;
       if (padEl !== branch) { setPad(branch, 0); }
-      // Mốc đang nằm ở toạ độ trang y; mong muốn y ≈ h (ngay dưới player)
+      // Idempotent: vị trí "tự nhiên" của mốc (không tính padding ta thêm) = y - pad → pad cần có = h - tự_nhiên.
+      // Không cộng dồn nên không bao giờ phình lên dù bị gọi nhiều lần / số liệu thoáng qua.
       const y = probe.getBoundingClientRect().top + window.scrollY;
-      const delta = h - y;
-      if (fixes >= 8) return;
-      if (delta > 3) { fixes++; setPad(branch, pad + delta); requestAnimationFrame(apply); }
-      else if (delta < -40 && pad > 0) { fixes++; setPad(branch, pad + delta + 8); requestAnimationFrame(apply); }   // hở quá lớn → bớt
+      const want = Math.max(0, Math.round(h - (y - pad)));
+      if (want !== pad && fixes < 6) { fixes++; setPad(branch, want); requestAnimationFrame(apply); }
+      else if (want === pad) fixes = 0;
     };
-    window.addEventListener('resize', () => setTimeout(() => { fixes = 0; apply(); }, 120), { passive: true });
+    window.addEventListener('resize', () => { setTimeout(() => { fixes = 0; apply(); }, 120); setTimeout(() => { fixes = 0; apply(); }, 600); }, { passive: true });
     apply.reset = clearPad;
     return apply;
   })();
@@ -720,7 +716,11 @@
     const native = !!(v && v.webkitDisplayingFullscreen);
     const on = location.pathname.startsWith('/watch') && window.innerWidth > window.innerHeight && !native &&
       !document.fullscreenElement && !document.webkitFullscreenElement;
+    const was = document.body.classList.contains('ae-land');
     document.body.classList.toggle('ae-land', on);
+    if (was !== on) {   // báo Swift để ẩn nút Tải khi đang ở chế độ ngang toàn màn hình
+      try { window.webkit.messageHandlers.aetherNav.postMessage({ isFullscreen: on }); } catch (_) { }
+    }
   };
   window.addEventListener('resize', syncLandscape, { passive: true });
   window.addEventListener('orientationchange', () => setTimeout(syncLandscape, 150), { passive: true });
@@ -742,31 +742,46 @@
     } catch (_) { }
   }, true);
 
-  // ── 5c-4. Thẻ "Next: … Mix" ở đáy: bấm vào BẤT KỲ đâu trên thẻ = mở danh sách (như bấm mũi tên) ──
-  // Trước đây chạm vào thân thẻ không mở panel mà còn xuyên xuống video đề xuất bên dưới → nhảy sang video khác.
-  window.addEventListener('click', (e) => {
-    if (!location.pathname.startsWith('/watch') || e.defaultPrevented) return;
-    const x = e.clientX, y = e.clientY;
-    if (y < window.innerHeight * 0.6) return;
-    let card = null;
-    for (const el of document.elementsFromPoint(x, y)) {
-      if (el.closest('#ae-sheet, #ae-toast')) return;
-      for (let n = el, i = 0; n && n !== document.body && i < 10; n = n.parentElement, i++) {
-        const pos = getComputedStyle(n).position;
-        if (pos !== 'fixed' && pos !== 'sticky') continue;
-        const r = n.getBoundingClientRect();
-        if (r.width > window.innerWidth * 0.7 && r.height > 30 && r.height < 160 && r.top > window.innerHeight * 0.55) { card = n; break; }
-      }
-      if (card) break;
-    }
-    if (!card) return;
-    const btns = card.querySelectorAll('button, [role="button"], .icon-button');
-    if (!btns.length) return;
-    const arrow = btns[btns.length - 1];
-    if (arrow.contains(e.target)) return;   // đã bấm trúng mũi tên → để YouTube tự xử lý
-    e.preventDefault(); e.stopImmediatePropagation();
-    arrow.click();
-  }, true);
+  // ── 5c-4. Thẻ "Next: … Mix" ở đáy: chạm BẤT KỲ đâu trên thẻ = mở danh sách (như bấm mũi tên) ──
+  // Dump DOM thật: thẻ là <ytm-playlist-panel-entry-point> (fixed), mũi tên là button.playlist-panel-right-icon.
+  // YouTube xử lý chạm thân thẻ bằng touch/pointer (không phải click) nên phải chặn từ touchend/pointerup ở pha capture.
+  (() => {
+    const ARROW = 'button.playlist-panel-right-icon, .playlist-panel-right-icon';
+    let start = null;
+    const cardAt = (x, y) => {
+      const card = document.querySelector('ytm-playlist-panel-entry-point');
+      if (!card) return null;
+      const r = card.getBoundingClientRect();
+      return (r.height > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) ? card : null;
+    };
+    const onArrow = (t) => !!(t && t.closest && t.closest(ARROW));
+    const open = (card) => { const a = card.querySelector(ARROW); if (a) a.click(); };
+
+    window.addEventListener('touchstart', (e) => {
+      start = null;
+      if (!location.pathname.startsWith('/watch') || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (cardAt(t.clientX, t.clientY) && !onArrow(e.target)) start = { x: t.clientX, y: t.clientY };
+    }, { passive: true, capture: true });
+
+    window.addEventListener('touchend', (e) => {
+      const s = start; start = null;
+      if (!s || !e.changedTouches.length) return;
+      const t = e.changedTouches[0];
+      if (Math.hypot(t.clientX - s.x, t.clientY - s.y) > 10) return;       // kéo/cuộn, không phải chạm
+      const card = cardAt(t.clientX, t.clientY);
+      if (!card || onArrow(e.target)) return;
+      e.preventDefault(); e.stopImmediatePropagation();                       // chặn YouTube xử lý (nhảy video khác)
+      open(card);
+    }, { passive: false, capture: true });
+
+    // Chặn các sự kiện còn lại của lần chạm đó trên thân thẻ (trừ mũi tên)
+    ['pointerup', 'mouseup', 'click'].forEach((type) => window.addEventListener(type, (e) => {
+      if (!location.pathname.startsWith('/watch') || onArrow(e.target)) return;
+      if (e.isTrusted === false) return;
+      if (cardAt(e.clientX, e.clientY)) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true));
+  })();
 
   // ── 5d. Animation mượt khi mở "xem trả lời" bình luận ──────────────────────────────────────────
   // CSS keyframes không làm nội dung bên dưới trượt theo → vẫn thấy "giật cục". Animate chiều cao thật bằng WAAPI.

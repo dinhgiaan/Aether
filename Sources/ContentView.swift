@@ -17,7 +17,7 @@ struct ContentView: View {
                 .ignoresSafeArea(edges: .bottom)
 
             // Nút Tải video nổi: nhỏ gọn, kéo thả tự do, nhớ vị trí
-            if web.isWatching {
+            if web.isWatching && !web.isFullscreen {
                 let currentVidId = web.extractCurrentVideoId() ?? ""
                 let progress = offlineManager.activeDownloadProgress[currentVidId]
 
@@ -122,7 +122,7 @@ struct ContentView: View {
                 .ignoresSafeArea()
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching && !web.isFullscreen)
         .animation(.easeInOut(duration: 0.3), value: showSplash)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: web.showOfflineLibrary)
         .task {

@@ -738,15 +738,21 @@
     }
   };
 
-  // ── 5. Toàn màn hình = xoay ngang app + player phủ kín bằng CSS (class ae-land, xem uienhance.js) ──────
-  // Trước đây dùng webkitEnterFullscreen() (trình phát native của iOS): chuyển cảnh nặng + khi đóng iOS tự pause video,
-  // và còn gọi cả khi xoay máy không có thao tác chạm → hai lần chuyển cảnh chồng nhau gây lag.
-  // Giờ chỉ xoay giao diện: video không bị đụng vào nên không giật, không bị dừng.
-  const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, .ytwPlayerBottomControlsFullscreenButtonWrapper, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
+  // ── 5. Toàn màn hình ─────────────────────────────────────────────────────────────────────────────
+  // Root cause video bị lệch / cắt đáy: giao diện player mới của YouTube dùng class khác nên selector nút fullscreen cũ
+  // không khớp → YouTube tự vào fullscreen PHẦN TỬ, tính kích thước video lúc đang xoay máy (số liệu cũ) rồi không tính lại.
+  // Giờ: bấm nút fullscreen → dùng trình phát fullscreen NATIVE của iOS (luôn đúng kích thước, tự xoay ngang, không phải
+  // xoay cả app nên không lag). iOS tự pause video khi thoát → ta tự phát lại. Báo trạng thái cho Swift để ẩn nút Tải.
+  const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, .ytwPlayerBottomControlsFullscreenButtonWrapper, .player-controls-bottom-right, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
   let lastFsReq = 0;
-  const requestFs = () => {
+  // Vào fullscreen native; không được thì dùng "fullscreen giả" (xoay app + CSS ae-land)
+  const enterFs = () => {
     lastFsReq = Date.now();
-    postNav({ action: window.innerWidth > window.innerHeight ? 'exitFullscreen' : 'enterFullscreen' });
+    const v = currentVideo();
+    if (v && v.webkitSupportsFullscreen !== false && typeof v.webkitEnterFullscreen === 'function') {
+      try { v.webkitEnterFullscreen(); return; } catch (_) { }
+    }
+    postNav({ action: 'enterFullscreen' });
   };
   document.addEventListener('click', (e) => {
     if (!location.pathname.startsWith('/watch')) return;
@@ -755,29 +761,33 @@
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    requestFs();
+    const v = currentVideo();
+    if (v && v.webkitDisplayingFullscreen) { try { v.webkitExitFullscreen(); } catch (_) { } return; }
+    if (window.innerWidth > window.innerHeight) { lastFsReq = Date.now(); postNav({ action: 'exitFullscreen' }); return; }   // đang "fullscreen giả"
+    enterFs();
   }, true);
-  // Nút fullscreen của giao diện mới có thể không khớp selector → YouTube tự vào fullscreen phần tử (video bị lệch, cắt đáy).
-  // Chặn: thoát ngay và đổi thành "xoay ngang/dọc" của ta.
+  // YouTube tự vào fullscreen phần tử (nút không khớp selector): thoát ngay, đổi sang fullscreen native
   ['fullscreenchange', 'webkitfullscreenchange'].forEach((t) => document.addEventListener(t, () => {
     if (!location.pathname.startsWith('/watch')) return;
     if (!(document.fullscreenElement || document.webkitFullscreenElement)) return;
     try { (document.exitFullscreen || document.webkitExitFullscreen || function () { }).call(document); } catch (_) { }
-    if (Date.now() - lastFsReq > 700) requestFs();
+    if (Date.now() - lastFsReq > 700) enterFs();
   }, true));
 
-  // Nếu vẫn lọt vào fullscreen native (vd. YouTube tự gọi): iOS pause video khi thoát → tự phát lại
   let wasPlayingBeforeFS = false;
   document.addEventListener('webkitbeginfullscreen', (e) => {
     const v = e.target;
     wasPlayingBeforeFS = v instanceof HTMLVideoElement && !v.paused;
+    postNav({ isFullscreen: true });
   }, true);
   document.addEventListener('webkitendfullscreen', (e) => {
-    postNav({ action: 'exitFullscreen' });
+    postNav({ isFullscreen: false });
     const v = e.target;
     if (wasPlayingBeforeFS && v instanceof HTMLVideoElement) {
-      [60, 250, 600].forEach((ms) => setTimeout(() => { if (v.paused && !v.ended) v.play().catch(() => { }); }, ms));
+      [60, 250, 600, 1200].forEach((ms) => setTimeout(() => { if (v.paused && !v.ended) v.play().catch(() => { }); }, ms));
     }
+    // Bố cục trang sau khi thoát: để uienhance.js đo lại chiều cao player
+    setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch (_) { } }, 350);
   }, true);
 
   // Lắng nghe trạng thái video để đồng bộ lên Lock Screen

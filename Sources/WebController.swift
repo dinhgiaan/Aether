@@ -39,6 +39,8 @@ final class WebController: NSObject, ObservableObject {
     @Published var activeDownloadInfo: VideoDownloadInfo?
     @Published var showDownloadSheet = false
     @Published var showOfflineLibrary = false
+    /// Video đang toàn màn hình (native hoặc xoay ngang) → ẩn nút Tải nổi
+    @Published var isFullscreen = false
     
     /// Container giữ MỌI WKWebView (đang hiển thị / đang PiP / dự phòng).
     /// Các WebView không bao giờ bị gỡ ra rồi gắn lại → không còn nháy trắng khi thu nhỏ / quay lại từ PiP.
@@ -183,6 +185,7 @@ final class WebController: NSObject, ObservableObject {
         webView = browseWebView
         observeURL()
         isWatching = false
+        isFullscreen = false
         hostView.present(browseWebView, sending: watch, showCover: false)
         // Đợi crossfade xong mới huỷ WebView video (dừng video chắc chắn)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
@@ -208,6 +211,7 @@ final class WebController: NSObject, ObservableObject {
         webView = browseWebView
         observeURL()
         isWatching = false
+        isFullscreen = false
         hostView.present(browseWebView, sending: parked, showCover: needsCover)
     }
 
@@ -658,6 +662,9 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     // Trạng thái xem chỉ lấy từ WebView đang hiển thị (bỏ qua trang đang PiP ở nền)
                     if let watching = dict["isWatching"] as? Bool, fromVisible {
                         target.isWatching = watching
+                    }
+                    if let fs = dict["isFullscreen"] as? Bool, fromVisible || fromParked {
+                        target.isFullscreen = fs
                     }
                     if let action = dict["action"] as? String {
                         if action == "minimizeToPiP" {
