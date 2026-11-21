@@ -8,7 +8,10 @@ import SwiftUI
 /// nên gỡ WebView cũ + dựng lại view mới (crossfade opacity mặc định → lộ nền trắng), đồng thời WebView
 /// còn bị `removeFromSuperview` rồi nhét vào UIWindow thủ công.
 /// Ở đây các WebView luôn nằm cố định trong cùng một container, chỉ đổi thứ tự lớp (z-order) → không nháy.
-final class WebHostView: UIView {
+final class WebHostView: UIView, UIGestureRecognizerDelegate {
+
+    /// Gọi khi người dùng vuốt từ mép trái vào đủ xa. Trả về true nếu đã xử lý (vd. đóng trang video)
+    var onEdgeBack: (() -> Bool)?
 
     private lazy var cover: UIView = {
         let v = UIView()
@@ -31,7 +34,23 @@ final class WebHostView: UIView {
         super.init(frame: frame)
         backgroundColor = .black
         clipsToBounds = true
+
+        // Vuốt từ mép trái = quay lại (kiểu iOS). WKWebView tự lo khi trang có lịch sử; gesture này lo trường hợp
+        // WebView video chưa có lịch sử để back → đóng video, về trang trước.
+        let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
+        edge.edges = .left
+        edge.delegate = self
+        addGestureRecognizer(edge)
     }
+
+    @objc private func handleEdgePan(_ g: UIScreenEdgePanGestureRecognizer) {
+        guard g.state == .ended else { return }
+        let dx = g.translation(in: self).x
+        let vx = g.velocity(in: self).x
+        if dx > 80 || vx > 600 { _ = onEdgeBack?() }
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

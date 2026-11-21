@@ -91,6 +91,7 @@ final class WebController: NSObject, ObservableObject {
         browseWebView = webView
         configure(webView)
         hostView.install(webView)
+        hostView.onEdgeBack = { [weak self] in self?.handleEdgeBack() ?? false }
         observeURL()
 
         let nc = NotificationCenter.default
@@ -166,6 +167,27 @@ final class WebController: NSObject, ObservableObject {
         observeURL()
         isWatching = true
         hostView.present(watch, sending: browseWebView, showCover: true)
+    }
+
+    /// Vuốt từ mép trái: nếu đang ở WebView video mà không còn lịch sử để back → đóng video, về trang duyệt.
+    /// (Có lịch sử thì WKWebView tự back bằng cử chỉ của nó.)
+    private func handleEdgeBack() -> Bool {
+        guard webView !== browseWebView, !webView.canGoBack else { return false }
+        closeWatch()
+        return true
+    }
+
+    func closeWatch() {
+        guard webView !== browseWebView else { return }
+        let watch = webView
+        webView = browseWebView
+        observeURL()
+        isWatching = false
+        hostView.present(browseWebView, sending: watch, showCover: false)
+        // Đợi crossfade xong mới huỷ WebView video (dừng video chắc chắn)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.tearDown(watch, silenceMedia: true)
+        }
     }
 
     /// Vuốt xuống khi đang PiP: giữ nguyên trang /watch ở WebView phía sau, hiện lại WebView duyệt.

@@ -377,6 +377,34 @@
   let lastSystemPause = 0;
   window.addEventListener('touchend', () => { lastTouch = Date.now(); }, true);
 
+  // ── Âm thanh: nhớ lựa chọn tắt/bật tiếng của người dùng ──────────────────────────────────────────
+  // Root cause "TAP TO UNMUTE": mỗi video giờ mở ở WebView mới (trang nạp mới, chưa có user-activation) nên YouTube
+  // tự phát ở chế độ tắt tiếng. Ta ghi nhớ lần người dùng CHỦ ĐỘNG bật/tắt tiếng (có chạm ngay trước đó) và
+  // tự bật lại tiếng khi vào video nếu lần cuối họ để bật tiếng.
+  const MUTE_KEY = 'ae.userMuted';
+  const readMuted = () => { try { return localStorage.getItem(MUTE_KEY) === '1'; } catch (_) { return false; } };
+  document.addEventListener('volumechange', (e) => {
+    const v = e.target;
+    if (!(v instanceof HTMLVideoElement) || Date.now() - lastTouch > 1500) return;   // chỉ ghi nhận thay đổi do người dùng chạm
+    const pl = v.closest && v.closest('.html5-video-player');
+    if (pl && pl.classList.contains('ad-showing')) return;
+    try { localStorage.setItem(MUTE_KEY, (v.muted || v.volume === 0) ? '1' : '0'); } catch (_) { }
+  }, true);
+  const restoreSound = () => {
+    if (!location.pathname.startsWith('/watch') || readMuted() || mutedByUs) return;
+    const v = document.querySelector('.html5-video-player video') || document.querySelector('video');
+    if (!v) return;
+    const pl = v.closest('.html5-video-player');
+    if (pl && pl.classList.contains('ad-showing')) return;   // quảng cáo: để bộ bỏ qua quảng cáo xử lý
+    if (v.muted || v.volume === 0) {
+      try { if (pl && typeof pl.unMute === 'function') pl.unMute(); } catch (_) { }
+      v.muted = false;
+      if (v.volume === 0) v.volume = 1;
+    }
+  };
+  document.addEventListener('playing', () => { restoreSound(); setTimeout(restoreSound, 400); setTimeout(restoreSound, 1500); }, true);
+  document.addEventListener('loadedmetadata', restoreSound, true);
+
   // Gửi thông tin phát nhạc lên Lock Screen / Control Center
   const syncNowPlaying = () => {
     const v = currentVideo();
@@ -714,7 +742,12 @@
   // Trước đây dùng webkitEnterFullscreen() (trình phát native của iOS): chuyển cảnh nặng + khi đóng iOS tự pause video,
   // và còn gọi cả khi xoay máy không có thao tác chạm → hai lần chuyển cảnh chồng nhau gây lag.
   // Giờ chỉ xoay giao diện: video không bị đụng vào nên không giật, không bị dừng.
-  const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
+  const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, .ytwPlayerBottomControlsFullscreenButtonWrapper, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
+  let lastFsReq = 0;
+  const requestFs = () => {
+    lastFsReq = Date.now();
+    postNav({ action: window.innerWidth > window.innerHeight ? 'exitFullscreen' : 'enterFullscreen' });
+  };
   document.addEventListener('click', (e) => {
     if (!location.pathname.startsWith('/watch')) return;
     const fsBtn = e.target.closest && e.target.closest(FS_SEL);
@@ -722,9 +755,16 @@
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    const landscape = window.innerWidth > window.innerHeight;
-    postNav({ action: landscape ? 'exitFullscreen' : 'enterFullscreen' });
+    requestFs();
   }, true);
+  // Nút fullscreen của giao diện mới có thể không khớp selector → YouTube tự vào fullscreen phần tử (video bị lệch, cắt đáy).
+  // Chặn: thoát ngay và đổi thành "xoay ngang/dọc" của ta.
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach((t) => document.addEventListener(t, () => {
+    if (!location.pathname.startsWith('/watch')) return;
+    if (!(document.fullscreenElement || document.webkitFullscreenElement)) return;
+    try { (document.exitFullscreen || document.webkitExitFullscreen || function () { }).call(document); } catch (_) { }
+    if (Date.now() - lastFsReq > 700) requestFs();
+  }, true));
 
   // Nếu vẫn lọt vào fullscreen native (vd. YouTube tự gọi): iOS pause video khi thoát → tự phát lại
   let wasPlayingBeforeFS = false;

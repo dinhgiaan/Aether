@@ -346,11 +346,11 @@ private struct NetflixSplashView: View {
                 .scaleEffect(emblemScale)
                 .opacity(emblemOpacity)
 
-                // Typography điện ảnh: A E T H E R
+                // Chữ "Aether": viết hoa chữ đầu, liền nét (không in hoa toàn bộ, không giãn chữ)
                 VStack(spacing: 6) {
-                    Text("A E T H E R")
-                        .font(.system(size: 22, weight: .heavy, design: .rounded))
-                        .tracking(8)
+                    Text("Aether")
+                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .tracking(0.5)
                         .foregroundStyle(
                             LinearGradient(
                                 colors: [.white, Color(white: 0.82)],
