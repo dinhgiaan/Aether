@@ -610,12 +610,12 @@
       const dt = (Date.now() - s.t0) || 1;
       const fast = s.dy > 40 && (s.dy / dt) > 0.5;
       if (!cancelled && (s.dy > COMMIT_DIST || fast)) {
-        // Tiếp tục trượt ra rồi mờ hẳn: liền mạch với lúc PiP bật lên
+        // Root cause khối đen vuông: iOS vẽ hoạt ảnh vào PiP từ KHUNG của <video> tại thời điểm bật PiP (lớp hệ thống, nằm trên
+        // mọi view nên đổi WebView cũng không che được). Trước đây khung đó đang bị ta kéo xuống + thu 88% → khối đen hiện ở
+        // giữa màn hình, lệch xa cửa sổ PiP. Giờ trả player về đúng chỗ gốc (không transition) TRƯỚC khi bật PiP,
+        // để hoạt ảnh của iOS đi từ vị trí video thật vào góc PiP.
         lastEl = s.el;
-        if (s.el) {
-          s.el.style.transition = 'transform .2s cubic-bezier(.4,0,1,1)';
-          s.el.style.transform = 'translate3d(0,' + Math.max(160, s.dy) + 'px,0) scale(.88)';
-        }
+        if (s.el) { s.el.style.transition = 'none'; s.el.style.transform = ''; s.el.style.opacity = ''; s.el.style.willChange = ''; void s.el.offsetHeight; }   // ép tính layout ngay để PiP lấy đúng khung gốc
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
         try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { resetPlayer(s.el, true); }

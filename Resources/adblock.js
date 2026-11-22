@@ -409,6 +409,7 @@
         if (v.paused) v.play().catch(() => { });
       } else {
         window.__aeInPiP = false;
+        lastPipExit = Date.now();
         // Trang đang bị "parked" (ẩn) vì thu nhỏ PiP: báo Swift khi PiP kết thúc.
         // Nút X → video bị pause → huỷ trang; nút "quay lại app" → video vẫn phát → hoán đổi về trang này.
         if (window.__aeParked) {
@@ -439,6 +440,10 @@
   let lastTouch = 0;
   let lastSystemPause = 0;
   let lastPipReq = 0;
+  let lastPipExit = 0;   // lần cuối PiP thoát về inline (nút X hoặc "quay lại app")
+  // Chỉ tự phát lại khi pause là do hệ thống lúc vào PiP: không có chạm mới VÀ PiP chưa hề thoát sau lúc bật.
+  // (Trước đây bấm X trên cửa sổ PiP → video pause → bị tự phát lại → app mở lại video.)
+  const pipGuardOk = () => Date.now() - lastPipReq < 3000 && lastPipExit <= lastPipReq && lastTouch < lastPipReq + 100;
   window.addEventListener('touchend', () => { lastTouch = Date.now(); }, true);
 
   // ── Âm thanh: nhớ lựa chọn tắt/bật tiếng của người dùng ──────────────────────────────────────────
@@ -553,7 +558,7 @@
       lastPipReq = Date.now(); this.remember();
       [300, 800, 1500, 2500].forEach((ms) => setTimeout(() => {
         const cv = currentVideo();
-        if (media.wasPlaying && cv && cv.paused && !cv.ended && lastTouch < lastPipReq + 100) media.resume();
+        if (media.wasPlaying && cv && cv.paused && !cv.ended && pipGuardOk()) media.resume();
       }, ms));
       try {
         if (useWK) v.webkitSetPresentationMode('picture-in-picture');
@@ -875,7 +880,7 @@
     if (now - lastTouch > 800) lastSystemPause = now;
     if (media.wasPlaying && now < media.keepAliveUntil) setTimeout(() => media.resume(), 60);
     // Pause xảy ra ngay sau khi bật/tắt fullscreen mà người dùng không chạm thêm → do hệ thống, phát lại
-    else if (media.wasPlaying && ((now - lastFsReq < 3000 && lastTouch < lastFsReq + 100) || (now - lastPipReq < 3000 && lastTouch < lastPipReq + 100))) setTimeout(() => media.resume(), 60);
+    else if (media.wasPlaying && ((now - lastFsReq < 3000 && lastTouch < lastFsReq + 100) || (now - lastPipReq < 3000 && lastTouch < lastPipReq + 100))) setTimeout(() => { if (now - lastPipReq < 3000 && lastPipExit > lastPipReq) return; media.resume(); }, 150);
     syncNowPlaying();
   }, true);
 
