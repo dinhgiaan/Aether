@@ -332,7 +332,7 @@
     /* Panel mô tả ("more"): YouTube đặt top = cao player + 48px (chừa header) nhưng ta ghim player sát đỉnh nên hở 48px
        lộ trang phía sau. Dump thật: ytm-engagement-panel fixed y281 trong khi player cao 233 → kéo lên sát đáy player. */
     body.ae-watching:not(.ae-land):not(.ae-rot) ytm-engagement-panel {
-      top: calc(100vw * 9 / 16) !important; bottom: 0 !important; height: auto !important; max-height: none !important;
+      top: calc(100vw * 9 / 16 + 2px) !important;   /* +2px: cách mép dưới video một chút cho dễ nhìn */ bottom: 0 !important; height: auto !important; max-height: none !important;
     }
     /* Hiệu ứng "cinematic/ambient" (canvas blur lớn vẽ liên tục theo video) rất tốn GPU → nguồn lag chính khi xem + khi PiP */
     ytm-cinematic-container-renderer, #player-cinematics-container, .player-cinematics,
@@ -560,11 +560,17 @@
         else { const p = v.requestPictureInPicture(); if (p && p.catch) p.catch(() => { }); }
       } catch (e) { toast('Không bật được PiP'); report(false); return 'error'; }
 
-      waitForPiP(v, 900).then((ok) => {
-        if (!ok) { toast('Không bật được PiP, hãy thử lại'); report(false); return; }
-        window.__aeParked = true;
-        if (!postNav({ action: 'minimizeToPiP', vid: videoIdOf() })) { window.__aeParked = false; report(false); return; }
-        report(true);
+      // Root cause khối đen vuông ~0.5-0.8s: trước đây đợi iOS báo "đã vào PiP" (hoạt ảnh vào PiP mất cỡ đó) rồi mới
+      // chuyển sang trang chủ → suốt thời gian chờ, trang video cũ lộ ra khung đen thay thế của <video> đang vào PiP.
+      // Giờ chuyển sang trang chủ NGAY khi bật PiP; nếu PiP thất bại thì đưa trang video về lại.
+      window.__aeParked = true;
+      if (!postNav({ action: 'minimizeToPiP', vid: videoIdOf() })) { window.__aeParked = false; report(false); return 'error'; }
+      report(true);
+      waitForPiP(v, 1800).then((ok) => {
+        if (ok) return;
+        window.__aeParked = false;
+        postNav({ action: 'pipEnded', restore: true });
+        setTimeout(() => toast('Không bật được PiP, hãy thử lại'), 400);
       });
       return 'pending';
     },
