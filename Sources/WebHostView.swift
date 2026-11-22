@@ -79,13 +79,22 @@ final class WebHostView: UIView, UIGestureRecognizerDelegate {
 
     /// Đưa `wv` lên trước, `old` lùi ra sau (vẫn sống để PiP chạy tiếp).
     /// - showCover: true khi `wv` mới tạo, chưa nạp xong → phủ lớp loading đen thay vì lộ trang trắng.
-    func present(_ wv: WKWebView, sending old: WKWebView, showCover: Bool) {
+    ///   animated: false → đổi tức thì (không crossfade). Dùng khi WebView cũ có thứ không được phép lộ ra giữa chừng
+    ///   (vd. <video> đang vào PiP hiện thành khung đen vuông, bị nhìn xuyên qua trong lúc crossfade).
+    func present(_ wv: WKWebView, sending old: WKWebView, showCover: Bool, animated: Bool = true) {
         wv.isUserInteractionEnabled = true
         old.isUserInteractionEnabled = false
 
         if showCover {
             bringSubviewToFront(wv)
             showLoadingCover()
+            return
+        }
+
+        if !animated {
+            wv.alpha = 1
+            bringSubviewToFront(wv)
+            sendSubviewToBack(old)
             return
         }
 

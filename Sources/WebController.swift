@@ -219,7 +219,7 @@ final class WebController: NSObject, ObservableObject {
         observeURL()
         isWatching = false
         isFullscreen = false
-        hostView.present(browseWebView, sending: parked, showCover: needsCover)
+        hostView.present(browseWebView, sending: parked, showCover: needsCover, animated: false)   // tức thì: không để khung đen của video đang PiP lộ ra qua crossfade
     }
 
     /// Nút "quay lại app" của cửa sổ PiP: đưa WebView video lên lại (WebView duyệt vẫn ở phía sau)
