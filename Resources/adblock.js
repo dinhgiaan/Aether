@@ -327,6 +327,13 @@
       position: absolute !important; left: 0 !important; top: 0 !important;
       width: 100% !important; height: 100% !important; object-fit: contain !important; transform: none !important;
     }
+    /* Xem trước video tại chỗ ở trang chủ: ẩn hẳn (khối đen chiếm chỗ + tốn tài nguyên) */
+    ytm-video-preview, #video-preview-portal { display: none !important; }
+    /* Panel mô tả ("more"): YouTube đặt top = cao player + 48px (chừa header) nhưng ta ghim player sát đỉnh nên hở 48px
+       lộ trang phía sau. Dump thật: ytm-engagement-panel fixed y281 trong khi player cao 233 → kéo lên sát đáy player. */
+    body.ae-watching:not(.ae-land):not(.ae-rot) ytm-engagement-panel {
+      top: calc(100vw * 9 / 16) !important; bottom: 0 !important; height: auto !important; max-height: none !important;
+    }
     /* Hiệu ứng "cinematic/ambient" (canvas blur lớn vẽ liên tục theo video) rất tốn GPU → nguồn lag chính khi xem + khi PiP */
     ytm-cinematic-container-renderer, #player-cinematics-container, .player-cinematics,
     .below-the-player-cinematic-container { display: none !important; }
@@ -415,8 +422,19 @@
     }
   }, true);
 
+  // Bỏ qua <video> của "xem trước tại chỗ" trên trang chủ (ytm-video-preview): không phải video đang xem
   const currentVideo = () =>
-    document.querySelector('.html5-video-player video') || document.querySelector('video');
+    document.querySelector('#player-container-id video') ||
+    Array.from(document.querySelectorAll('video')).find((v) => !v.closest('ytm-video-preview')) || null;
+
+  // Chặn tự phát xem trước trên trang chủ: nó hiện khối đen 16:9 trên đầu feed trước khi tải xong, tốn pin/GPU/mạng
+  try {
+    const origPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      if (this.closest && this.closest('ytm-video-preview')) return Promise.reject(new DOMException('Aether: preview disabled', 'NotAllowedError'));
+      return origPlay.apply(this, arguments);
+    };
+  } catch (_) { }
 
   let lastTouch = 0;
   let lastSystemPause = 0;
