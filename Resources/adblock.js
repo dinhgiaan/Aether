@@ -412,12 +412,19 @@
         lastPipExit = Date.now();
         // Trang đang bị "parked" (ẩn) vì thu nhỏ PiP: báo Swift khi PiP kết thúc.
         // Nút X → video bị pause → huỷ trang; nút "quay lại app" → video vẫn phát → hoán đổi về trang này.
+        // Root cause "bấm X rồi video tự mở lại": iOS đổi mode về inline TRƯỚC, pause video SAU vài trăm ms. Trước đây chỉ
+        // kiểm tra paused đúng 350ms sau → còn thấy "đang phát" → tưởng là nút "quay lại app" → mở lại trang video.
+        // Giờ chờ tối đa 900ms: hễ thấy video bị pause = nút X → huỷ ngay; vẫn phát sau 900ms = "quay lại app" → khôi phục.
         if (window.__aeParked) {
-          setTimeout(() => {
-            if (!window.__aeParked || isPiP(v)) return;
-            window.__aeParked = false;
-            postNav({ action: 'pipEnded', restore: !v.paused });
-          }, 350);
+          const t0 = Date.now();
+          const decide = () => {
+            if (!window.__aeParked) return;
+            if (isPiP(v)) return;                                  // lại vào PiP → huỷ quyết định
+            if (v.paused || v.ended) { window.__aeParked = false; postNav({ action: 'pipEnded', restore: false }); return; }
+            if (Date.now() - t0 >= 900) { window.__aeParked = false; postNav({ action: 'pipEnded', restore: true }); return; }
+            setTimeout(decide, 60);
+          };
+          setTimeout(decide, 120);
         }
       }
     }
