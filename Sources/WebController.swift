@@ -65,6 +65,8 @@ final class WebController: NSObject, ObservableObject {
     /// WebView dự phòng (chưa nạp trang nào) nằm sẵn sau cùng để bấm video không phải khởi tạo WKWebView trên main thread.
     /// KHÔNG nạp about:blank vào đây: nó thành 1 mục lịch sử → canGoBack = true → cử chỉ vuốt-từ-mép-trái đóng video bị hỏng.
     private var spareWebView: WKWebView?
+    /// Lần cuối khôi phục trang video từ PiP: để biết tín hiệu "pipClosedLate" (bấm X nhưng iOS pause chậm) còn hợp lệ không
+    private var restoredAt = Date.distantPast
     private let contentController = WKUserContentController()
     private var urlObservation: NSKeyValueObservation?
 
@@ -253,8 +255,27 @@ final class WebController: NSObject, ObservableObject {
         parkedWebView = nil
         webView = parked
         observeURL()
-        hostView.present(parked, sending: previous, showCover: false)
+        setTransparent(parked, false)   // đang trong suốt từ lúc kéo thu nhỏ → trả lại nền đen đặc
+        restoredAt = Date()
+        // Đổi tức thì (không crossfade 0.22s): cửa sổ PiP đang tự phóng về chỗ video, trang video phải có mặt ngay
+        hostView.present(parked, sending: previous, showCover: false, animated: false)
         updateWatching()
+    }
+
+    /// Bấm X nhưng iOS pause video chậm → JS đã khôi phục nhầm: đóng lại trang video (chỉ trong ~2s sau khi khôi phục)
+    func handleLatePiPClose() {
+        guard Date().timeIntervalSince(restoredAt) < 2.0, webView !== browseWebView else { return }
+        closeWatch()
+    }
+
+    /// Kéo video xuống: cho WebView video trong suốt để thấy trang chủ (WebView duyệt) nằm phía sau thay vì khung đen
+    func setRevealTransparent(_ on: Bool) { setTransparent(webView, on) }
+
+    private func setTransparent(_ wv: WKWebView, _ on: Bool) {
+        wv.isOpaque = !on
+        let color: UIColor = on ? .clear : .black
+        wv.backgroundColor = color
+        wv.scrollView.backgroundColor = color
     }
 
     /// Đóng PiP (nút X, hoặc mở video mới): dừng và huỷ WebView đang giữ
@@ -749,6 +770,10 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                                (url.host ?? "").hasSuffix("youtube.com") {
                                 target.openWatch(url)
                             }
+                        } else if action == "dragReveal" {
+                            if fromVisible, let on = dict["on"] as? Bool { target.setRevealTransparent(on) }
+                        } else if action == "pipClosedLate" {
+                            if fromVisible { target.handleLatePiPClose() }
                         } else if action == "watchReady" {
                             // Layout trang video đã ổn định (padding chừa chỗ cho player đã áp) → gỡ lớp phủ ngay
                             if fromVisible { target.hostView.hideCover(force: true) }

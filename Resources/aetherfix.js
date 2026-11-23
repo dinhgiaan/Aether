@@ -29,7 +29,12 @@
     waitFor(() => document.documentElement, (root) => {
         const s = document.createElement('style');
         s.id = 'ae-fix-bg';
-        s.textContent = 'html,body{background:#0f0f0f!important}';
+        s.textContent =
+            'html,body{background:#0f0f0f!important}' +
+            // Đang kéo video xuống (class do uienhance.js gắn): nền trong suốt + ẩn mọi thứ trừ player → lộ trang chủ phía sau
+            'html.ae-drag,html.ae-drag body{background:transparent!important}' +
+            'html.ae-drag body{visibility:hidden!important}' +
+            'html.ae-drag .ae-drag-keep,html.ae-drag .ae-drag-keep *{visibility:visible!important}';
         root.appendChild(s);
     });
 
@@ -62,25 +67,34 @@
 
     // ── 4. Trang /watch đã ổn định layout ─────────────────────────────────────
     // Mốc = tiêu đề/kênh của video (cùng mốc mà ensurePlayerSpacer trong uienhance.js dùng).
-    // Khi vị trí mốc đứng yên ≥ 450ms thì padding chừa chỗ cho player đã được áp xong → gỡ cover không còn nhảy.
+    // Root cause "video đã phát mà vẫn còn vòng loading": trước đây chỉ gỡ cover khi mốc đứng yên ≥ 450ms, mà mốc hay
+    // dịch chuyển lâu hơn video bắt đầu phát. Giờ video đã phát là gỡ ngay sau tối đa 450ms (hoặc 200ms nếu layout đã yên).
     if (isWatch()) {
         const PROBE = 'h1.slim-video-metadata-title, .slim-video-metadata-title, .ytm-slim-video-information-title, ytm-slim-video-metadata-section-renderer, ytm-slim-video-information-renderer, ytm-slim-owner-renderer, .slim-owner-channel-name';
         const t0 = performance.now();
-        let lastTop = NaN, stableSince = 0, done = false;
+        let lastTop = NaN, stableSince = 0, playingAt = 0, done = false;
         const finish = () => {
             if (done) return;
             done = true;
             post('aetherNav', { action: 'watchReady' });
         };
+        const isPlaying = () => {
+            const v = document.querySelector('#player-container-id video, .html5-video-player video, video');
+            return !!v && !v.paused && v.readyState >= 3 && v.currentTime > 0.05;
+        };
         const step = (now) => {
             if (done) return;
+            let stable = 0;
             const probe = document.querySelector(PROBE);
             if (probe) {
                 const top = Math.round(probe.getBoundingClientRect().top);
                 if (top !== lastTop) { lastTop = top; stableSince = now; }
-                else if (now - stableSince >= 450) { finish(); return; }
+                stable = now - stableSince;
             }
-            if (now - t0 > 5000) { finish(); return; }      // bảo hiểm: không để cover treo
+            if (!playingAt && isPlaying()) playingAt = now;
+            if (playingAt && (stable >= 200 || now - playingAt >= 450)) { finish(); return; }   // video đã phát → gỡ cover
+            if (stable >= 600) { finish(); return; }          // video không tự phát (autoplay bị chặn): layout yên là đủ
+            if (now - t0 > 4000) { finish(); return; }        // bảo hiểm: không để cover treo
             requestAnimationFrame(step);
         };
         requestAnimationFrame(step);

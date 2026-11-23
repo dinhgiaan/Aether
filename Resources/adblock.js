@@ -416,15 +416,25 @@
         // kiểm tra paused đúng 350ms sau → còn thấy "đang phát" → tưởng là nút "quay lại app" → mở lại trang video.
         // Giờ chờ tối đa 900ms: hễ thấy video bị pause = nút X → huỷ ngay; vẫn phát sau 900ms = "quay lại app" → khôi phục.
         if (window.__aeParked) {
+          // Root cause "bấm vào cửa sổ PiP rồi trễ ~1.3s mới hiện video": trước đây phải chờ đủ 900ms (để chắc không phải nút X)
+          // rồi mới báo "quay lại app". Giờ quyết định 2 giai đoạn: video vẫn phát sau ~300ms → khôi phục NGAY (lạc quan);
+          // nếu sau đó nó bị pause trong cửa sổ 900ms (nút X, iOS pause chậm) → báo pipClosedLate để Swift đóng lại trang video.
           const t0 = Date.now();
+          let restored = false;
           const decide = () => {
-            if (!window.__aeParked) return;
+            if (!restored && !window.__aeParked) return;
             if (isPiP(v)) return;                                  // lại vào PiP → huỷ quyết định
-            if (v.paused || v.ended) { window.__aeParked = false; postNav({ action: 'pipEnded', restore: false }); return; }
-            if (Date.now() - t0 >= 900) { window.__aeParked = false; postNav({ action: 'pipEnded', restore: true }); return; }
+            if (v.paused || v.ended) {
+              if (restored) postNav({ action: 'pipClosedLate' });
+              else { window.__aeParked = false; postNav({ action: 'pipEnded', restore: false }); }
+              return;
+            }
+            const dt = Date.now() - t0;
+            if (!restored && dt >= 300) { restored = true; window.__aeParked = false; postNav({ action: 'pipEnded', restore: true }); }
+            if (dt >= 900) return;
             setTimeout(decide, 60);
           };
-          setTimeout(decide, 120);
+          setTimeout(decide, 100);
         }
       }
     }

@@ -563,6 +563,21 @@
     let g = null, busy = false, raf = 0, lastEl = null;
     const COMMIT_DIST = 90;
 
+    // Root cause khung đen phía sau khi kéo: player (position:fixed) bị kéo đi nhưng chỗ cũ của nó vẫn là nền/placeholder
+    // đen của trang video. Giờ lúc kéo: ẩn mọi thứ trừ player (CSS .ae-drag trong aetherfix.js) + báo Swift cho WebView
+    // video trong suốt → lộ trang chủ (WebView duyệt) nằm phía sau, giống vuốt thu nhỏ kiểu app thật.
+    const postDrag = (on) => { try { window.webkit.messageHandlers.aetherNav.postMessage({ action: 'dragReveal', on }); } catch (_) { } };
+    const revealOn = (el) => {
+      if (el) el.classList.add('ae-drag-keep');
+      document.documentElement.classList.add('ae-drag');
+      postDrag(true);
+    };
+    const revealOff = () => {
+      document.documentElement.classList.remove('ae-drag');
+      document.querySelectorAll('.ae-drag-keep').forEach((n) => n.classList.remove('ae-drag-keep'));
+      postDrag(false);
+    };
+
     const paint = () => {
       raf = 0;
       if (!g || g.lock !== 'v' || !g.el) return;
@@ -594,6 +609,7 @@
           g.el.style.transition = 'none';
           g.el.style.willChange = 'transform';
           g.y0 = t.clientY;   // tính từ lúc khoá hướng → video bám ngón tay, không bị giật nhảy ban đầu
+          revealOn(g.el);
         }
       }
       if (g.lock === 'x') { g = null; return; }
@@ -618,9 +634,10 @@
         if (s.el) { s.el.style.transition = 'none'; s.el.style.transform = ''; s.el.style.opacity = ''; s.el.style.willChange = ''; void s.el.offsetHeight; }   // ép tính layout ngay để PiP lấy đúng khung gốc
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
-        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { resetPlayer(s.el, true); }
+        try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { resetPlayer(s.el, true); setTimeout(revealOff, 280); }
       } else {
         resetPlayer(s.el, true);
+        setTimeout(revealOff, 280);   // đợi video trượt về chỗ cũ xong mới trả lại nền
       }
     };
     window.addEventListener('touchend', () => finish(false), { passive: true, capture: true });
@@ -631,8 +648,8 @@
     window.addEventListener('ae:minimize-result', (e) => {
       const el = lastEl; lastEl = null;
       if (!el) return;
-      if (e.detail && e.detail.ok) setTimeout(() => resetPlayer(el, false), 700);
-      else resetPlayer(el, true);
+      if (e.detail && e.detail.ok) setTimeout(() => { resetPlayer(el, false); revealOff(); }, 700);
+      else { resetPlayer(el, true); setTimeout(revealOff, 280); }
     });
   })();
 
