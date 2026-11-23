@@ -212,16 +212,17 @@ final class WebController: NSObject, ObservableObject {
         return true
     }
 
-    func closeWatch() {
+    /// instant = true: đổi tức thì, không crossfade (dùng khi trang video vừa bị khôi phục nhầm sau nút X của PiP)
+    func closeWatch(instant: Bool = false) {
         guard webView !== browseWebView else { return }
         let watch = webView
         webView = browseWebView
         observeURL()
         isWatching = false
         isFullscreen = false
-        hostView.present(browseWebView, sending: watch, showCover: false)
+        hostView.present(browseWebView, sending: watch, showCover: false, animated: !instant)
         // Đợi crossfade xong mới huỷ WebView video (dừng video chắc chắn)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (instant ? 0.05 : 0.35)) { [weak self] in
             self?.tearDown(watch, silenceMedia: true)
         }
     }
@@ -264,8 +265,8 @@ final class WebController: NSObject, ObservableObject {
 
     /// Bấm X nhưng iOS pause video chậm → JS đã khôi phục nhầm: đóng lại trang video (chỉ trong ~2s sau khi khôi phục)
     func handleLatePiPClose() {
-        guard Date().timeIntervalSince(restoredAt) < 2.0, webView !== browseWebView else { return }
-        closeWatch()
+        guard Date().timeIntervalSince(restoredAt) < 3.0, webView !== browseWebView else { return }
+        closeWatch(instant: true)
     }
 
     /// Kéo video xuống: cho WebView video trong suốt để thấy trang chủ (WebView duyệt) nằm phía sau thay vì khung đen

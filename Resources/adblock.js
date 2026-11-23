@@ -419,19 +419,31 @@
           // Root cause "bấm vào cửa sổ PiP rồi trễ ~1.3s mới hiện video": trước đây phải chờ đủ 900ms (để chắc không phải nút X)
           // rồi mới báo "quay lại app". Giờ quyết định 2 giai đoạn: video vẫn phát sau ~300ms → khôi phục NGAY (lạc quan);
           // nếu sau đó nó bị pause trong cửa sổ 900ms (nút X, iOS pause chậm) → báo pipClosedLate để Swift đóng lại trang video.
+          // v3: ngưỡng khôi phục 450ms (300ms quá sớm → nhiều lần bấm X vẫn bị mở lại), và cửa sổ theo dõi pause kéo dài tới
+          // 2.2s (trước đây dừng ở 900ms nên nếu iOS pause chậm hơn thì trang video mở lại và đứng đó với khung đen).
           const t0 = Date.now();
-          let restored = false;
+          let restored = false, closedLate = false;
+          const lateClose = () => {
+            if (closedLate || !restored || isPiP(v)) return;
+            if (Date.now() - lastTouch < 800) return;              // người dùng tự bấm pause → không phải nút X
+            closedLate = true;
+            postNav({ action: 'pipClosedLate' });
+          };
           const decide = () => {
             if (!restored && !window.__aeParked) return;
             if (isPiP(v)) return;                                  // lại vào PiP → huỷ quyết định
             if (v.paused || v.ended) {
-              if (restored) postNav({ action: 'pipClosedLate' });
+              if (restored) lateClose();
               else { window.__aeParked = false; postNav({ action: 'pipEnded', restore: false }); }
               return;
             }
             const dt = Date.now() - t0;
-            if (!restored && dt >= 300) { restored = true; window.__aeParked = false; postNav({ action: 'pipEnded', restore: true }); }
-            if (dt >= 900) return;
+            if (!restored && dt >= 450) {
+              restored = true; window.__aeParked = false; postNav({ action: 'pipEnded', restore: true });
+              v.addEventListener('pause', lateClose);              // bắt pause ngay khi nó xảy ra, không chờ lượt kiểm tra kế tiếp
+              setTimeout(() => v.removeEventListener('pause', lateClose), 2300);
+            }
+            if (dt >= 2200) return;
             setTimeout(decide, 60);
           };
           setTimeout(decide, 100);

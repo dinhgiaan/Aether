@@ -555,7 +555,7 @@
   const resetPlayer = (el, animate) => {
     if (!el) return;
     el.style.transition = animate ? 'transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s ease' : 'none';
-    el.style.transform = ''; el.style.opacity = '';
+    el.style.transform = ''; el.style.opacity = ''; el.style.transformOrigin = '';
     setTimeout(() => { el.style.transition = ''; el.style.willChange = ''; }, animate ? 260 : 30);
   };
 
@@ -631,7 +631,20 @@
         // giữa màn hình, lệch xa cửa sổ PiP. Giờ trả player về đúng chỗ gốc (không transition) TRƯỚC khi bật PiP,
         // để hoạt ảnh của iOS đi từ vị trí video thật vào góc PiP.
         lastEl = s.el;
-        if (s.el) { s.el.style.transition = 'none'; s.el.style.transform = ''; s.el.style.opacity = ''; s.el.style.willChange = ''; void s.el.offsetHeight; }   // ép tính layout ngay để PiP lấy đúng khung gốc
+        if (s.el) {
+          s.el.style.transition = 'none'; s.el.style.transform = ''; s.el.style.opacity = ''; s.el.style.willChange = ''; void s.el.offsetHeight;   // ép tính layout để đo khung gốc
+          // v3: khối đen cỡ video vẫn còn vì iOS vẫn vẽ chỗ trống đen đúng tại khung <video> lúc bật PiP. Thay vì để video nằm
+          // nguyên khung to ở giữa, thu nó về cỡ cửa sổ PiP (~190px) sát góc dưới-phải ngay trước khi bật PiP → vùng đen (nếu còn)
+          // nhỏ và nằm ngay dưới cửa sổ PiP nên không còn nhìn thấy.
+          try {
+            const r = s.el.getBoundingClientRect();
+            const pw = Math.min(190, r.width * 0.5), sc = pw / Math.max(1, r.width);
+            const tx = window.innerWidth - pw - 16, ty = window.innerHeight - pw * 9 / 16 - 110 - r.top;
+            s.el.style.transformOrigin = '0 0';
+            s.el.style.transform = 'translate3d(' + tx.toFixed(0) + 'px,' + ty.toFixed(0) + 'px,0) scale(' + sc.toFixed(3) + ')';
+            void s.el.offsetHeight;
+          } catch (_) { }
+        }
         busy = true; setTimeout(() => { busy = false; }, 1500);
         // Gọi đồng bộ trong touchend để WebKit coi là user gesture khi bật PiP
         try { window.__aeMedia && window.__aeMedia.minimize(); } catch (_) { resetPlayer(s.el, true); setTimeout(revealOff, 280); }
