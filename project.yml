@@ -29,6 +29,7 @@ targets:
         CFBundleShortVersionString: "1.0.0"
         UIBackgroundModes: [audio]            # phát nhạc/video khi khóa màn hình
         UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark            # app thiết kế nền tối: launch screen hết trắng, WKWebView báo prefers-color-scheme: dark
         ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

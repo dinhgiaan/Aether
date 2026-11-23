@@ -3,7 +3,9 @@ import AVKit
 
 struct OfflineLibraryView: View {
     var onBack: (() -> Void)? = nil
-    @ObservedObject var offlineManager = OfflineManager.shared
+    // Quan sát lớp đệm đã throttle thay vì OfflineManager: tiến trình tải cập nhật rất dày, quan sát thẳng sẽ
+    // dựng lại cả danh sách (kể cả đọc file/giải mã ảnh của từng hàng) hàng chục lần mỗi giây
+    @ObservedObject private var downloads = DownloadUIState.shared
     @Environment(\.dismiss) private var dismiss
     @State private var playingVideo: OfflineVideo?
     
@@ -12,18 +14,18 @@ struct OfflineLibraryView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 
-                if offlineManager.downloadedVideos.isEmpty && offlineManager.activeDownloadProgress.isEmpty {
+                if downloads.downloaded.isEmpty && downloads.progress.isEmpty {
                     EmptyOfflineView()
                 } else {
                     List {
-                        if !offlineManager.activeDownloadProgress.isEmpty {
-                            ActiveDownloadingSection(offlineManager: offlineManager)
+                        if !downloads.progress.isEmpty {
+                            ActiveDownloadingSection(downloads: downloads)
                         }
                         
                         DownloadedListSection(
-                            videos: offlineManager.downloadedVideos,
+                            videos: downloads.downloaded,
                             onPlay: { video in playingVideo = video },
-                            onDelete: { video in offlineManager.deleteVideo(video) }
+                            onDelete: { video in OfflineManager.shared.deleteVideo(video) }
                         )
                     }
                     .scrollContentBackground(.hidden)
@@ -95,15 +97,16 @@ private struct EmptyOfflineView: View {
 
 // MARK: – Active Downloads Section
 private struct ActiveDownloadingSection: View {
-    @ObservedObject var offlineManager: OfflineManager
+    @ObservedObject var downloads: DownloadUIState
     
     var body: some View {
         Section(header: Text("ĐANG TẢI").foregroundStyle(.gray)) {
-            ForEach(Array(offlineManager.activeDownloadProgress.keys), id: \.self) { vidId in
-                let progress = offlineManager.activeDownloadProgress[vidId] ?? 0.0
+            // activeIDs đã sắp xếp: Dictionary.keys có thứ tự ngẫu nhiên → các hàng nhảy qua lại ở mỗi lần cập nhật
+            ForEach(downloads.activeIDs, id: \.self) { vidId in
+                let progress = downloads.progress[vidId] ?? 0.0
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(offlineManager.activeDownloadTitles[vidId] ?? "Đang tải video...")
+                        Text(downloads.titles[vidId] ?? "Đang tải video...")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)
@@ -116,7 +119,7 @@ private struct ActiveDownloadingSection: View {
                     ProgressView(value: progress)
                         .tint(.red)
                     
-                    Text(offlineManager.activeDownloadStatus[vidId] ?? "Đang kết nối...")
+                    Text(downloads.status[vidId] ?? "Đang kết nối...")
                         .font(.caption2)
                         .foregroundStyle(.gray)
                 }
@@ -158,7 +161,12 @@ private struct DownloadedListSection: View {
 private struct DownloadedVideoRow: View {
     let video: OfflineVideo
     
-    private var isCorrupted: Bool {
+    // Trước đây là computed property → đọc thuộc tính file ngay trên main thread ở MỖI lần dựng lại hàng.
+    // Giờ kiểm tra 1 lần ngoài main thread khi hàng xuất hiện.
+    @State private var isCorrupted = false
+    
+    // nonisolated: được gọi từ Task.detached (ngoài main thread)
+    private nonisolated static func checkCorrupted(_ video: OfflineVideo) -> Bool {
         // HLS: chỉ cần playlist tồn tại (file playlist nhỏ hơn 10KB là bình thường)
         if video.isHLS { return !FileManager.default.fileExists(atPath: video.videoURL.path) }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
@@ -212,18 +220,28 @@ private struct DownloadedVideoRow: View {
                     .foregroundStyle(.red)
             }
         }
+        .task(id: video.id) {
+            let v = video
+            isCorrupted = await Task.detached(priority: .utility) { Self.checkCorrupted(v) }.value
+        }
     }
 }
 
 // MARK: – Video Thumbnail
+/// Cache ảnh đã giải mã: trước đây UIImage(contentsOfFile:) chạy đồng bộ trên main thread trong body của MỖI hàng
+/// ở MỖI lần dựng lại → giật khi cuộn danh sách / khi đang có video tải.
+private enum ThumbnailCache {
+    static let images = NSCache<NSString, UIImage>()
+}
+
 private struct VideoThumbnailView: View {
     let thumbnailURL: URL?
+    @State private var image: UIImage?
     
     var body: some View {
         Group {
-            if let thumbURL = thumbnailURL,
-               let uiImg = UIImage(contentsOfFile: thumbURL.path) {
-                Image(uiImage: uiImg)
+            if let image {
+                Image(uiImage: image)
                     .resizable()
                     .aspectRatio(16/9, contentMode: .fill)
             } else {
@@ -234,6 +252,21 @@ private struct VideoThumbnailView: View {
                             .foregroundStyle(.white.opacity(0.6))
                     )
             }
+        }
+        .task(id: thumbnailURL) { await load() }
+    }
+    
+    private func load() async {
+        guard let url = thumbnailURL else { image = nil; return }
+        let key = url.path as NSString
+        if let hit = ThumbnailCache.images.object(forKey: key) { image = hit; return }
+        // Đọc + giải mã sẵn ngoài main thread (preparingForDisplay) rồi mới gán vào view
+        let decoded = await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: url.path)?.preparingForDisplay()
+        }.value
+        if let decoded {
+            ThumbnailCache.images.setObject(decoded, forKey: key)
+            image = decoded
         }
     }
 }

@@ -60,6 +60,11 @@ final class WebController: NSObject, ObservableObject {
     private var browseWebView: WKWebView!
     private var lastBrowseURL: URL = Config.home
     private let configuration: WKWebViewConfiguration
+    /// start() được gọi từ init VÀ từ ContentView.task → cờ này đảm bảo chỉ nạp trang + biên dịch blocklist đúng 1 lần
+    private var didStart = false
+    /// WebView dự phòng (chưa nạp trang nào) nằm sẵn sau cùng để bấm video không phải khởi tạo WKWebView trên main thread.
+    /// KHÔNG nạp about:blank vào đây: nó thành 1 mục lịch sử → canGoBack = true → cử chỉ vuốt-từ-mép-trái đóng video bị hỏng.
+    private var spareWebView: WKWebView?
     private let contentController = WKUserContentController()
     private var urlObservation: NSKeyValueObservation?
 
@@ -72,6 +77,13 @@ final class WebController: NSObject, ObservableObject {
         config.websiteDataStore = .default() // lưu cookie đăng nhập
         config.userContentController = contentController
 
+        // Script vá hiển thị (nền tối, class ae-watching sớm, báo feed/watch sẵn sàng).
+        // Phải đăng ký TRƯỚC adblock/uienhance để chạy đầu tiên.
+        if let js = WebController.loadResource("aetherfix", "js") {
+            contentController.addUserScript(
+                WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            )
+        }
         // Script chặn quảng cáo, chạy ở document start trong mọi frame
         if let js = WebController.loadResource("adblock", "js") {
             contentController.addUserScript(
@@ -95,6 +107,7 @@ final class WebController: NSObject, ObservableObject {
         contentController.add(proxy, name: "nowPlaying")
         contentController.add(proxy, name: "downloadData")
         contentController.add(proxy, name: "aetherNav")
+        contentController.add(proxy, name: "aetherFeedReady")
 
         browseWebView = webView
         configure(webView)
@@ -168,13 +181,24 @@ final class WebController: NSObject, ObservableObject {
             webView.load(URLRequest(url: url))   // đang ở WebView video rồi → điều hướng tại chỗ
             return
         }
-        let watch = makeWebView()
-        hostView.install(watch)
+        // Dùng WebView dựng sẵn nếu có → tránh khựng vài frame do WKWebView() khởi tạo ngay lúc chạm
+        let watch = spareWebView ?? makeWebView()
+        spareWebView = nil
+        hostView.install(watch)   // đã nằm trong host thì hàm tự bỏ qua
         watch.load(URLRequest(url: url))
         webView = watch
         observeURL()
         isWatching = true
         hostView.present(watch, sending: browseWebView, showCover: true)
+        // Dựng sẵn cái kế tiếp khi UI đã yên (không trùng frame với animation mở video)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.prewarmSpare() }
+    }
+
+    private func prewarmSpare() {
+        guard spareWebView == nil else { return }
+        let wv = makeWebView()
+        hostView.install(wv, behind: true)   // nằm sau cùng, không nhận chạm
+        spareWebView = wv
     }
 
     /// Vuốt từ mép trái: nếu đang ở WebView video mà không còn lịch sử để back → đóng video, về trang duyệt.
@@ -248,11 +272,14 @@ final class WebController: NSObject, ObservableObject {
     func dismissSplash() {
         guard isInitialLoading else { return }
         isInitialLoading = false
+        // Trang chủ đã lên → dựng WebView dự phòng đầu tiên (tránh tranh tài nguyên lúc đang nạp trang)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.prewarmSpare() }
     }
 
     // Tải trang web YouTube ngay lập tức, không đợi loadBlocklist
     func start() {
-        guard webView.url == nil else { return }
+        guard !didStart, webView.url == nil else { return }
+        didStart = true
         webView.load(URLRequest(url: Config.home))
         Task.detached(priority: .userInitiated) { [weak self] in
             await self?.loadBlocklist()
@@ -576,38 +603,58 @@ final class WebController: NSObject, ObservableObject {
         }
     }
     
+    /// Cache ảnh bìa: JS gọi nowPlaying mỗi ~4s + mỗi lần play/pause; trước đây lần nào cũng tải lại ảnh từ mạng
+    /// và ghi đè nowPlayingInfo làm ảnh bìa trên Lock Screen nháy mất rồi hiện lại.
+    private var artworkURLString: String?
+    private var cachedArtwork: MPMediaItemArtwork?
+
     func updateNowPlaying(dict: [String: Any]) {
         let title = dict["title"] as? String ?? "Aether Video"
         let author = dict["author"] as? String ?? "YouTube"
         let duration = dict["duration"] as? Double ?? 0
         let currentTime = dict["currentTime"] as? Double ?? 0
         let isPlaying = dict["isPlaying"] as? Bool ?? true
-        let thumbnail = dict["thumbnail"] as? String
-        
-        let info: [String: Any] = [
+        let thumbnail = dict["thumbnail"] as? String ?? ""
+
+        var info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: author,
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
-        
+        // Đã có ảnh bìa trong cache → gắn luôn vào lần cập nhật này
+        if thumbnail == artworkURLString, let art = cachedArtwork {
+            info[MPMediaItemPropertyArtwork] = art
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        
-        if let thumbStr = thumbnail, let url = URL(string: thumbStr) {
-            Task.detached(priority: .background) {
-                if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
-                    let artwork = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
-                    Task { @MainActor in
-                        var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-                        current[MPMediaItemPropertyArtwork] = artwork
-                        MPNowPlayingInfoCenter.default().nowPlayingInfo = current
-                    }
-                }
+
+        // Chỉ tải khi đổi sang video khác
+        guard !thumbnail.isEmpty, thumbnail != artworkURLString, let url = URL(string: thumbnail) else { return }
+        artworkURLString = thumbnail
+        cachedArtwork = nil
+        Task.detached(priority: .background) { [weak self] in
+            guard let data = try? Data(contentsOf: url), let img = UIImage(data: data) else {
+                await self?.artworkDidFail(thumbnail)
+                return
             }
+            let artwork = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+            await self?.artworkDidLoad(artwork, for: thumbnail)
         }
     }
-    
+
+    private func artworkDidFail(_ key: String) {
+        if artworkURLString == key { artworkURLString = nil }   // lỗi mạng → cho thử lại ở lần sau
+    }
+
+    private func artworkDidLoad(_ artwork: MPMediaItemArtwork, for key: String) {
+        guard artworkURLString == key else { return }   // đã chuyển video khác → bỏ
+        cachedArtwork = artwork
+        var current = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        current[MPMediaItemPropertyArtwork] = artwork
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = current
+    }
+
     func handleDownloadPayload(dict: [String: Any]) {
         guard let videoId = dict["videoId"] as? String,
               let title = dict["title"] as? String else { return }
@@ -653,7 +700,9 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
             guard let target = target else { return }
             switch message.name {
             case "aetherReady":
-                target.dismissSplash()
+                break   // bắn ở DOMContentLoaded (quá sớm, feed chưa vẽ) → không dùng để tắt splash nữa
+            case "aetherFeedReady":
+                target.dismissSplash()   // feed trang chủ đã có nội dung thật
             case "nowPlaying":
                 if let dict = message.body as? [String: Any] {
                     target.updateNowPlaying(dict: dict)
@@ -667,10 +716,12 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     let fromVisible = message.webView === target.webView
                     let fromParked = message.webView != nil && message.webView === target.parkedWebView
                     // Trạng thái xem chỉ lấy từ WebView đang hiển thị (bỏ qua trang đang PiP ở nền)
-                    if let watching = dict["isWatching"] as? Bool, fromVisible {
+                    // So sánh trước khi gán: @Published phát thay đổi cả khi giá trị y hệt → SwiftUI dựng lại cả ContentView
+                    // (adblock.js gửi isWatching ở mỗi pushState, kể cả đúng lúc cover đang fade-in lúc mở video)
+                    if let watching = dict["isWatching"] as? Bool, fromVisible, target.isWatching != watching {
                         target.isWatching = watching
                     }
-                    if let fs = dict["isFullscreen"] as? Bool, fromVisible || fromParked {
+                    if let fs = dict["isFullscreen"] as? Bool, fromVisible || fromParked, target.isFullscreen != fs {
                         target.isFullscreen = fs
                     }
                     if let action = dict["action"] as? String {
@@ -698,6 +749,9 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                                (url.host ?? "").hasSuffix("youtube.com") {
                                 target.openWatch(url)
                             }
+                        } else if action == "watchReady" {
+                            // Layout trang video đã ổn định (padding chừa chỗ cho player đã áp) → gỡ lớp phủ ngay
+                            if fromVisible { target.hostView.hideCover(force: true) }
                         } else if action == "openDownloads" {
                             target.showOfflineLibrary = true
                         } else if action == "requestDownload" {
@@ -770,8 +824,18 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        dismissSplash()
-        if webView === self.webView { hostView.hideCover() }   // trang duyệt mới nạp xong → bỏ lớp loading
+        if webView === browseWebView {
+            // Tín hiệu chính tắt splash là aetherFeedReady (feed đã vẽ). Đây chỉ là dự phòng nếu selector feed không khớp.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.dismissSplash() }
+            if webView === self.webView { hostView.hideCover() }   // trang duyệt mới nạp xong → bỏ lớp loading
+        } else if webView === self.webView {
+            // WebView video: cover do tín hiệu watchReady gỡ (đợi layout ổn định). Dự phòng 2.5s nếu JS không báo.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self, weak webView] in
+                guard let self, let webView, webView === self.webView else { return }
+                self.hostView.hideCover(force: true)
+            }
+        }
+        // WebView dự phòng (spare) không nạp gì nên không đi tới đây
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

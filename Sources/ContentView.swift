@@ -1,246 +1,74 @@
 import SwiftUI
-import WebKit
+import AVKit
 
-struct ContentView: View {
-    @StateObject private var web = WebController()
-    @ObservedObject private var offlineManager = OfflineManager.shared
-    @State private var showSplash = true
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
-
-            // Cử chỉ vuốt xuống từ video được xử lý trong JS (uienhance.js) để có user gesture khi bật PiP
-            // Host view giữ mọi WKWebView cố định → hoán đổi PiP chỉ đổi z-order, không dựng lại view (hết nháy)
-            WebViewContainer(host: web.hostView)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(edges: web.isFullscreen ? .all : .bottom)   // xoay ngang: phủ kín cả tai thỏ, không còn viền đen 2 bên
-
-            // Nút Tải video nổi: nhỏ gọn, kéo thả tự do, nhớ vị trí
-            // Bọc Group để animation CHỈ áp cho nút (trước đây .animation gắn cả ZStack → WebView bị animate khi xoay → giật)
-            Group {
-            if web.isWatching && !web.isFullscreen {
-                let currentVidId = web.extractCurrentVideoId() ?? ""
-                let progress = offlineManager.activeDownloadProgress[currentVidId]
-
-                FloatingDownloadButton(progress: progress) {
-                    Haptic.feedback(.medium)
-                    if progress != nil {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            web.showOfflineLibrary = true
-                        }
-                    } else {
-                        web.requestDownload()
-                    }
-                }
-                .transition(.scale.combined(with: .opacity))
-                .zIndex(10)
-            }
-            }
-            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: web.isWatching && !web.isFullscreen)
-
-            // Thanh thông báo tiến trình tải video thời gian thực nổi ở góc trên
-            if let activeId = offlineManager.activeDownloadProgress.keys.first,
-               let progress = offlineManager.activeDownloadProgress[activeId] {
-                VStack {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            Circle()
-                                .stroke(Color.white.opacity(0.18), lineWidth: 3)
-                            Circle()
-                                .trim(from: 0, to: CGFloat(progress))
-                                .stroke(Color.red, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                                .animation(.linear(duration: 0.2), value: progress)
-                            Text("\(Int(progress * 100))%")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                        .frame(width: 32, height: 32)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(offlineManager.activeDownloadTitles[activeId] ?? "Đang tải video...")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                            Text(offlineManager.activeDownloadStatus[activeId] ?? "\(Int(progress * 100))%")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                        
-                        Spacer()
-                        
-                        Button {
-                            Haptic.feedback(.light)
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                web.showOfflineLibrary = true
-                            }
-                        } label: {
-                            Text("Xem")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.18), in: Capsule())
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.white.opacity(0.22), lineWidth: 0.6))
-                    .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 48)
-
-                    Spacer()
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .zIndex(15)
-            }
-
-            // Màn hình Thư viện Ngoại Tuyến toàn trang (Dedicated Full Page)
-            if web.showOfflineLibrary {
-                OfflineLibraryView(onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        web.showOfflineLibrary = false
-                    }
-                })
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing),
-                    removal: .move(edge: .trailing)
-                ))
-                .zIndex(20)
-                .ignoresSafeArea()
-            }
-
-            // Cinematic Netflix-Style Splash Screen: hiển thị khi mở app, tự động biến mất mượt mà
-            if showSplash {
-                NetflixSplashView {
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        showSplash = false
-                        web.dismissSplash()
-                    }
-                }
-                .transition(.opacity)
-                .zIndex(30)
-                .ignoresSafeArea()
-            }
-        }
-        .statusBarHidden(web.isFullscreen)
-        .animation(.easeInOut(duration: 0.3), value: showSplash)
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: web.showOfflineLibrary)
-        .task {
-            web.start()
-            // Bảo hiểm: sau 1.35s bắt buộc tắt splash dù bất kể mạng hay môi trường LiveContainer
-            try? await Task.sleep(nanoseconds: 1_350_000_000)
-            if showSplash {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    showSplash = false
-                    web.dismissSplash()
-                }
-            }
-        }
-        // Sheet chọn chất lượng tải xuống
-        .sheet(isPresented: $web.showDownloadSheet) {
-            if let info = web.activeDownloadInfo {
-                DownloadQualitySheet(info: info) { chosenStream in
-                    offlineManager.startDownload(
-                        videoId: info.id,
-                        title: info.title,
-                        author: info.author,
-                        quality: chosenStream.quality,
-                        duration: info.duration,
-                        streamURLString: chosenStream.url,
-                        audioURLString: chosenStream.audioURL,
-                        thumbnailURLString: info.thumbnailURL,
-                        userAgent: chosenStream.userAgent,
-                        clientName: chosenStream.clientName,
-                        isHLS: chosenStream.isHLS
-                    )
-                    web.showDownloadSheet = false
-                }
-                .presentationDetents([.medium])
-            }
-        }
-    }
-}
-
-// MARK: – Sheet chọn chất lượng tải xuống
-private struct DownloadQualitySheet: View {
-    let info: VideoDownloadInfo
-    let onSelect: (StreamOption) -> Void
+struct OfflineLibraryView: View {
+    var onBack: (() -> Void)? = nil
+    // Quan sát lớp đệm đã throttle thay vì OfflineManager: tiến trình tải cập nhật rất dày, quan sát thẳng sẽ
+    // dựng lại cả danh sách (kể cả đọc file/giải mã ảnh của từng hàng) hàng chục lần mỗi giây
+    @ObservedObject private var downloads = DownloadUIState.shared
     @Environment(\.dismiss) private var dismiss
-
+    @State private var playingVideo: OfflineVideo?
+    
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(white: 0.08).ignoresSafeArea()
+                Color.black.ignoresSafeArea()
                 
-                VStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(info.title)
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                        Text(info.author)
-                            .font(.subheadline)
-                            .foregroundStyle(.gray)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-                    
-                    Text("CHỌN CHẤT LƯỢNG TẢI:")
-                        .font(.caption)
-                        .foregroundStyle(.gray)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                    
-                    VStack(spacing: 10) {
-                        if info.streams.isEmpty {
-                            Text("Không tìm thấy luồng tải trực tiếp cho video này.")
-                                .font(.subheadline)
-                                .foregroundStyle(.gray)
-                                .padding()
-                        } else {
-                            ForEach(info.streams) { stream in
-                                Button {
-                                    onSelect(stream)
-                                } label: {
-                                    HStack {
-                                        Image(systemName: "video.fill")
-                                            .foregroundStyle(.red)
-                                        Text(stream.quality)
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundStyle(.white)
-                                        Spacer()
-                                        Text(stream.audioURL != nil ? "Ghép Native HD" : "Trực tiếp")
-                                            .font(.caption2)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.white.opacity(0.12), in: Capsule())
-                                            .foregroundStyle(.white.opacity(0.8))
-                                        Image(systemName: "arrow.down.circle.fill")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                                }
-                            }
+                if downloads.downloaded.isEmpty && downloads.progress.isEmpty {
+                    EmptyOfflineView()
+                } else {
+                    List {
+                        if !downloads.progress.isEmpty {
+                            ActiveDownloadingSection(downloads: downloads)
                         }
+                        
+                        DownloadedListSection(
+                            videos: downloads.downloaded,
+                            onPlay: { video in playingVideo = video },
+                            onDelete: { video in OfflineManager.shared.deleteVideo(video) }
+                        )
                     }
-                    .padding(.horizontal)
-                    
-                    Spacer()
+                    .scrollContentBackground(.hidden)
                 }
             }
-            .navigationTitle("Tải Video Ngoại Tuyến")
+            .navigationTitle("Video Ngoại Tuyến")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Hủy") { dismiss() }
-                        .foregroundStyle(.gray)
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if let onBack = onBack {
+                            onBack()
+                        } else {
+                            dismiss()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("Quay lại")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .foregroundStyle(.white)
+                    }
+                }
+            }
+            .fullScreenCover(item: $playingVideo) { video in
+                ZStack(alignment: .topTrailing) {
+                    NativeVideoPlayer(url: video.videoURL, title: video.title) {
+                        playingVideo = nil
+                    }
+                    .ignoresSafeArea()
+                    
+                    Button {
+                        playingVideo = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .background(Circle().fill(Color.black.opacity(0.6)))
+                            .padding(.top, 52)
+                            .padding(.trailing, 20)
+                    }
                 }
             }
         }
@@ -248,188 +76,236 @@ private struct DownloadQualitySheet: View {
     }
 }
 
-
-// MARK: – Cinematic Netflix-Style Splash Intro
-private struct NetflixSplashView: View {
-    let onFinished: () -> Void
-
-    @State private var emblemScale: CGFloat = 0.55
-    @State private var emblemOpacity: Double = 0.0
-    @State private var shockwaveScale: CGFloat = 0.8
-    @State private var shockwaveOpacity: Double = 0.0
-    @State private var beamHeight: CGFloat = 0.0
-    @State private var beamOpacity: Double = 0.0
-    @State private var glowRadius: CGFloat = 10.0
-    @State private var zoomThrough: CGFloat = 1.0
-    @State private var totalOpacity: Double = 1.0
-
+// MARK: – Empty State
+private struct EmptyOfflineView: View {
     var body: some View {
-        ZStack {
-            // Nền đen điện ảnh sâu
-            Color(red: 0.04, green: 0.04, blue: 0.06)
-                .ignoresSafeArea()
-
-            // Dải ruy-băng ánh sáng đa sắc phong cách Netflix (Vertical Ribbon Beams)
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [Color.clear, Color(red: 0.98, green: 0.72, blue: 0.15), Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 4, height: beamHeight * 0.7)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [Color.clear, Color(red: 0.95, green: 0.35, blue: 0.18), Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 6, height: beamHeight * 0.9)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [Color.clear, Color(red: 0.95, green: 0.15, blue: 0.25), Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 8, height: beamHeight)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [Color.clear, Color(red: 0.85, green: 0.08, blue: 0.35), Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 6, height: beamHeight * 0.85)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(LinearGradient(colors: [Color.clear, Color(red: 0.65, green: 0.15, blue: 0.85), Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 4, height: beamHeight * 0.65)
-            }
-            .opacity(beamOpacity)
-            .blur(radius: 6)
-
-            // Vòng sóng xung kích phát sáng bùng nổ (Shockwave Ripple)
-            Circle()
-                .stroke(
-                    LinearGradient(
-                        colors: [Color(red: 0.98, green: 0.72, blue: 0.15),
-                                 Color(red: 0.95, green: 0.25, blue: 0.25)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 3
-                )
-                .frame(width: 100, height: 100)
-                .scaleEffect(shockwaveScale)
-                .opacity(shockwaveOpacity)
-
-            // Vùng sáng quang sai trung tâm
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color(red: 0.95, green: 0.35, blue: 0.15).opacity(0.45),
-                                 Color.clear],
-                        center: .center,
-                        startRadius: 10,
-                        endRadius: 110
-                    )
-                )
-                .frame(width: 220, height: 220)
-                .blur(radius: glowRadius)
-                .opacity(emblemOpacity)
-
-            // Biểu tượng trung tâm Celestial Eclipse + Chữ Aether
-            VStack(spacing: 24) {
-                ZStack {
-                    // Vòng mặt trời nhật thực
-                    Circle()
-                        .strokeBorder(
-                            AngularGradient(
-                                colors: [
-                                    Color(red: 0.98, green: 0.72, blue: 0.15),
-                                    Color(red: 0.95, green: 0.25, blue: 0.25),
-                                    Color(red: 0.75, green: 0.10, blue: 0.20),
-                                    Color(red: 0.98, green: 0.72, blue: 0.15)
-                                ],
-                                center: .center
-                            ),
-                            lineWidth: 5.5
-                        )
-                        .frame(width: 82, height: 82)
-                        .shadow(color: Color(red: 0.95, green: 0.35, blue: 0.15).opacity(0.65), radius: 18)
-
-                    // Tam giác Play phát sáng
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .offset(x: 3)
-                        .shadow(color: .white.opacity(0.5), radius: 8)
-                }
-                .scaleEffect(emblemScale)
-                .opacity(emblemOpacity)
-
-                // Chữ "Aether": viết hoa chữ đầu, liền nét (không in hoa toàn bộ, không giãn chữ)
-                VStack(spacing: 6) {
-                    Text("Aether")
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
-                        .tracking(0.5)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.white, Color(white: 0.82)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .shadow(color: Color(red: 0.95, green: 0.35, blue: 0.15).opacity(0.5), radius: 14)
-                }
-                .opacity(emblemOpacity)
-            }
-            .scaleEffect(zoomThrough)
-        }
-        .opacity(totalOpacity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            dismissImmediately()
-        }
-        .onAppear {
-            runNetflixSequence()
-        }
-    }
-
-    private func dismissImmediately() {
-        withAnimation(.easeOut(duration: 0.2)) {
-            totalOpacity = 0.0
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            onFinished()
-        }
-    }
-
-    private func runNetflixSequence() {
-        // Giai đoạn 1 (0.0s - 0.32s): Logo xuất hiện từ không gian sâu
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.68)) {
-            emblemScale = 1.0
-            emblemOpacity = 1.0
-        }
-
-        // Giai đoạn 2 (0.32s - 0.75s): Vụ nổ ánh sáng dải ruy-băng "Ta-Dum"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            Haptic.feedback(.medium)
-            withAnimation(.easeOut(duration: 0.45)) {
-                shockwaveScale = 3.6
-                shockwaveOpacity = 0.8
-                beamHeight = 280
-                beamOpacity = 0.9
-                glowRadius = 35
-            }
-            withAnimation(.easeIn(duration: 0.35).delay(0.2)) {
-                shockwaveOpacity = 0.0
-                beamOpacity = 0.0
-            }
-        }
-
-        // Giai đoạn 3 (0.85s - 1.15s): Zoom xuyên qua logo mở màn hình chính YouTube
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.82) {
-            withAnimation(.easeInOut(duration: 0.32)) {
-                zoomThrough = 1.35
-                totalOpacity = 0.0
-            }
-        }
-
-        // Hoàn tất và dỡ bỏ Splash Screen hoàn toàn
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            onFinished()
+        VStack(spacing: 16) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 56, weight: .thin))
+                .foregroundStyle(.gray)
+            Text("Chưa có video tải xuống")
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text("Khi xem bất kỳ video nào, nhấn nút Tải xuống để lưu xem ngoại tuyến không cần mạng.")
+                .font(.subheadline)
+                .foregroundStyle(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
         }
     }
 }
 
-// MARK: – Haptic Feedback Helper
-enum Haptic {
-    static func feedback(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
-        let generator = UIImpactFeedbackGenerator(style: style)
-        generator.prepare()
-        generator.impactOccurred()
+// MARK: – Active Downloads Section
+private struct ActiveDownloadingSection: View {
+    @ObservedObject var downloads: DownloadUIState
+    
+    var body: some View {
+        Section(header: Text("ĐANG TẢI").foregroundStyle(.gray)) {
+            // activeIDs đã sắp xếp: Dictionary.keys có thứ tự ngẫu nhiên → các hàng nhảy qua lại ở mỗi lần cập nhật
+            ForEach(downloads.activeIDs, id: \.self) { vidId in
+                let progress = downloads.progress[vidId] ?? 0.0
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(downloads.titles[vidId] ?? "Đang tải video...")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.red)
+                    }
+                    
+                    ProgressView(value: progress)
+                        .tint(.red)
+                    
+                    Text(downloads.status[vidId] ?? "Đang kết nối...")
+                        .font(.caption2)
+                        .foregroundStyle(.gray)
+                }
+                .padding(.vertical, 4)
+                .listRowBackground(Color(white: 0.12))
+            }
+        }
+    }
+}
+
+// MARK: – Downloaded List Section
+private struct DownloadedListSection: View {
+    let videos: [OfflineVideo]
+    let onPlay: (OfflineVideo) -> Void
+    let onDelete: (OfflineVideo) -> Void
+    
+    var body: some View {
+        Section(header: Text("VIDEO ĐÃ TẢI (\(videos.count))").foregroundStyle(.gray)) {
+            ForEach(videos) { video in
+                Button {
+                    onPlay(video)
+                } label: {
+                    DownloadedVideoRow(video: video)
+                }
+                .listRowBackground(Color(white: 0.1))
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        onDelete(video)
+                    } label: {
+                        Label("Xoá", systemImage: "trash")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: – Single Video Row
+private struct DownloadedVideoRow: View {
+    let video: OfflineVideo
+    
+    // Trước đây là computed property → đọc thuộc tính file ngay trên main thread ở MỖI lần dựng lại hàng.
+    // Giờ kiểm tra 1 lần ngoài main thread khi hàng xuất hiện.
+    @State private var isCorrupted = false
+    
+    // nonisolated: được gọi từ Task.detached (ngoài main thread)
+    private nonisolated static func checkCorrupted(_ video: OfflineVideo) -> Bool {
+        // HLS: chỉ cần playlist tồn tại (file playlist nhỏ hơn 10KB là bình thường)
+        if video.isHLS { return !FileManager.default.fileExists(atPath: video.videoURL.path) }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: video.videoURL.path),
+              let size = attrs[.size] as? Int64 else { return true }
+        return size < 10_000
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            VideoThumbnailView(thumbnailURL: video.thumbnailURL)
+                .frame(width: 100, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(video.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                
+                HStack(spacing: 6) {
+                    Text(video.author)
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                    Text("•")
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                    Text(video.quality)
+                        .font(.caption2)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.white)
+                }
+                
+                if isCorrupted {
+                    Text("File bị lỗi – Vuốt sang trái để xoá")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                }
+            }
+            
+            Spacer()
+            
+            if isCorrupted {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.yellow)
+            } else {
+                Image(systemName: "play.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+            }
+        }
+        .task(id: video.id) {
+            let v = video
+            isCorrupted = await Task.detached(priority: .utility) { Self.checkCorrupted(v) }.value
+        }
+    }
+}
+
+// MARK: – Video Thumbnail
+/// Cache ảnh đã giải mã: trước đây UIImage(contentsOfFile:) chạy đồng bộ trên main thread trong body của MỖI hàng
+/// ở MỖI lần dựng lại → giật khi cuộn danh sách / khi đang có video tải.
+private enum ThumbnailCache {
+    static let images = NSCache<NSString, UIImage>()
+}
+
+private struct VideoThumbnailView: View {
+    let thumbnailURL: URL?
+    @State private var image: UIImage?
+    
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(16/9, contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(Color(white: 0.2))
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .foregroundStyle(.white.opacity(0.6))
+                    )
+            }
+        }
+        .task(id: thumbnailURL) { await load() }
+    }
+    
+    private func load() async {
+        guard let url = thumbnailURL else { image = nil; return }
+        let key = url.path as NSString
+        if let hit = ThumbnailCache.images.object(forKey: key) { image = hit; return }
+        // Đọc + giải mã sẵn ngoài main thread (preparingForDisplay) rồi mới gán vào view
+        let decoded = await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: url.path)?.preparingForDisplay()
+        }.value
+        if let decoded {
+            ThumbnailCache.images.setObject(decoded, forKey: key)
+            image = decoded
+        }
+    }
+}
+
+/// Bọc AVPlayerViewController để phát offline với đầy đủ tính năng: xoay ngang, PiP, điều khiển
+struct NativeVideoPlayer: UIViewControllerRepresentable {
+    let url: URL
+    let title: String
+    var onDismiss: (() -> Void)? = nil
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDismiss: onDismiss)
+    }
+    
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        
+        let playerItem = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: playerItem)
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.allowsPictureInPicturePlayback = true
+        controller.showsPlaybackControls = true
+        controller.delegate = context.coordinator
+        player.play()
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+    
+    final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        var onDismiss: (() -> Void)?
+        init(onDismiss: (() -> Void)?) {
+            self.onDismiss = onDismiss
+        }
+        
+        func playerViewControllerWillStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            onDismiss?()
+        }
     }
 }
