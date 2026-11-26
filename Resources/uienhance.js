@@ -59,6 +59,8 @@
     }
     /* Ẩn chữ "Remove" xanh; xóa bằng nhấn giữ (có hộp thoại xác nhận) như YouTube */
     .ae-sug-remove { display: none !important; }
+    /* Icon/nút gốc của YouTube (mũi tên ↖ trắng lệch theo độ dài chữ): ẩn đi, chỉ dùng nút .ae-sug-fill của Aether */
+    .ae-sug-row .ae-native-icon { display: none !important; }
     /* Nút ↖ điền chữ vào ô tìm kiếm */
     .ae-sug-fill {
       flex: 0 0 44px !important; width: 44px !important; height: 44px !important;
@@ -236,41 +238,6 @@
         }
       }
     });
-
-    // Thêm thẻ "Video đã tải ngoại tuyến" vào Hồ Sơ bên dưới phần Lịch sử xem (Recent)
-    if (location.pathname.startsWith('/feed/you') || location.pathname.startsWith('/feed/library')) {
-      if (!document.getElementById('ae-profile-dl-card')) {
-        const historyShelf = document.querySelector('ytm-rich-shelf-renderer, ytm-item-section-renderer:has(a[href*="/watch"])');
-        const container = document.querySelector('ytm-section-list-renderer') || document.querySelector('.page-container');
-        if (container) {
-          const card = document.createElement('div');
-          card.id = 'ae-profile-dl-card';
-          card.style.cssText = `
-            margin: 12px 14px;
-            padding: 13px 16px;
-            border-radius: 16px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 0.5px solid rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            cursor: pointer;
-          `;
-          card.addEventListener('click', () => {
-            try {
-              window.webkit?.messageHandlers?.aetherNav?.postMessage({ action: 'openDownloads' });
-            } catch (_) { }
-          });
-          if (historyShelf && historyShelf.nextSibling) {
-            historyShelf.parentNode.insertBefore(card, historyShelf.nextSibling);
-          } else {
-            container.prepend(card);
-          }
-        }
-      }
-    }
   };
 
   // ── 4. Thêm Tab "Đã tải" riêng vào Bottom Bar ──────────────────────────────
@@ -422,8 +389,20 @@
     return best;
   };
 
+  // Root cause mũi tên bị nhân đôi: YouTube đã có sẵn nút ↖ riêng trong mỗi hàng, Aether lại thêm 1 nút nữa.
+  // Nút gốc nằm theo dòng chảy flex ngay sau chữ → lệch x theo độ dài chữ. Ẩn mọi icon/nút rỗng chữ của YouTube.
+  const NATIVE_ICON_SEL = 'button, [role="button"], c3-icon, ytm-icon, svg, img, [class*="icon" i], [class*="arrow" i]';
+  const hideNativeIcons = (row) => {
+    row.querySelectorAll(NATIVE_ICON_SEL).forEach((el) => {
+      if (el.classList.contains('ae-native-icon') || el.closest('.ae-sug-fill, .ae-sug-remove')) return;
+      if ((el.textContent || '').trim()) return;   // có chữ → là phần nội dung, không phải icon
+      el.classList.add('ae-native-icon');
+    });
+  };
+
   const markRow = (row, isHist, removeBtn) => {
     row.classList.add('ae-sug-row');
+    hideNativeIcons(row);
     row.classList.toggle('ae-hist', isHist);
     row.classList.toggle('ae-sug', !isHist);
     if (removeBtn) removeBtn.classList.add('ae-sug-remove');
@@ -437,10 +416,11 @@
   };
 
   let searchLast = 0, searchTimer = 0;
-  const enhanceSearch = () => {
+  let plainList = null;   // cache list gợi ý khi gõ: tránh quét toàn bộ DOM + getBoundingClientRect mỗi frame
+  const enhanceSearch = (force) => {
     if (!isSearchContext()) return;
     const now = Date.now();
-    if (now - searchLast < 120) {                 // throttle + trailing call
+    if (!force && now - searchLast < 120) {                 // throttle + trailing call
       if (!searchTimer) searchTimer = setTimeout(() => { searchTimer = 0; enhanceSearch(); }, 140);
       return;
     }
@@ -471,7 +451,14 @@
       });
       return;
     }
-    const list = findPlainSuggestionList();
+    const input = document.querySelector(SEARCH_INPUT_SEL);
+    const hasText = !!(input && input.value && input.value.trim());
+    if (!hasText) plainList = null;
+    let list = null;
+    if (hasText) {
+      list = plainList && plainList.isConnected && plainList.childElementCount >= 1 ? plainList : findPlainSuggestionList();
+      plainList = list;
+    }
     if (list) {
       list.classList.add('ae-sug-list');
       [...list.children].forEach((k) => markRow(k, false, null));
@@ -1114,6 +1101,14 @@
       else window.requestAnimationFrame(runEnhancers);
     });
     observer.observe(document.body, { childList: true, subtree: true });
+
+    // Observer riêng cho tìm kiếm: xử lý ngay trước khung hình kế (rAF) thay vì chờ 300ms của observer chung.
+    // Root cause mũi tên "nhảy lung tung": gợi ý hiện ra ở dạng gốc ~300-450ms rồi mới bị restyle.
+    let searchRaf = 0;
+    new MutationObserver(() => {
+      if (searchRaf || location.pathname.startsWith('/watch')) return;
+      searchRaf = window.requestAnimationFrame(() => { searchRaf = 0; enhanceSearch(true); });
+    }).observe(document.body, { childList: true, subtree: true });
   }, { once: true });
 
   // ── 7. Hiệu ứng chạm tab phản hồi xúc giác nhẹ (Spring feedback) ───────────

@@ -799,6 +799,13 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
 
 // MARK: - Điều hướng & Xử lý WebKit
 extension WebController: WKNavigationDelegate, WKUIDelegate {
+    /// Domain tin cậy: <name>.<tld> hoặc <name>.<co|com|net|org>.<cc>, kèm mọi subdomain. VD: m.youtube.com, www.google.com.vn
+    static func isTrustedHost(_ host: String) -> Bool {
+        if host == "youtu.be" || host.hasSuffix(".youtu.be") { return true }
+        let pattern = #"(^|\.)(youtube|youtube-nocookie|google|gstatic|ggpht|googlevideo|ytimg|googleusercontent)\.([a-z]{2,}|(com|co|net|org)\.[a-z]{2})$"#
+        return host.range(of: pattern, options: .regularExpression) != nil
+    }
+
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -826,15 +833,8 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
         }
 
         let host = url.host?.lowercased() ?? ""
-        // Các domain hợp lệ của YouTube, Google và CDN dịch vụ
-        let isInternal = host.contains("youtube.") ||
-                         host.contains("youtu.be") ||
-                         host.contains("google.") ||
-                         host.contains("gstatic.") ||
-                         host.contains("ggpht.") ||
-                         host.contains("googlevideo.") ||
-                         host.contains("ytimg.") ||
-                         host.isEmpty
+        // Chỉ coi là nội bộ khi domain gốc đúng là của YouTube/Google/CDN (không dùng contains → chặn youtube.evil.com)
+        let isInternal = host.isEmpty || WebController.isTrustedHost(host)
 
         if isInternal {
             decisionHandler(.allow)
@@ -915,7 +915,7 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
         let scheme = url.scheme?.lowercased() ?? ""
         guard scheme == "http" || scheme == "https" else { return nil }
         let host = url.host?.lowercased() ?? ""
-        let isInternal = host.contains("youtube.") || host.contains("google.") || host.contains("youtu.be")
+        let isInternal = WebController.isTrustedHost(host)
         if isInternal {
             webView.load(navigationAction.request)
         } else {
