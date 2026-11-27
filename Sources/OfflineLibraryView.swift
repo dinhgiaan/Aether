@@ -8,7 +8,40 @@ struct OfflineLibraryView: View {
     @ObservedObject private var downloads = DownloadUIState.shared
     @Environment(\.dismiss) private var dismiss
     @State private var playingVideo: OfflineVideo?
-    
+    // Vuốt từ mép trái sang phải để quay lại (giống nút back)
+    @State private var dragX: CGFloat = 0
+    @State private var isEdgeDragging = false
+    private let edgeWidth: CGFloat = 28           // vùng nhận vuốt: 28pt sát mép trái
+    private let commitDistance: CGFloat = 110     // kéo quá ngưỡng này thì quay lại
+
+    /// Quay lại: ưu tiên callback của ContentView (có animation riêng), không có thì dismiss
+    private func goBack() {
+        if let onBack = onBack { onBack() } else { dismiss() }
+    }
+
+    /// Vuốt từ mép trái: màn hình đi theo ngón tay; thả đủ xa hoặc vuốt nhanh thì quay lại, không thì bật về
+    private var edgeSwipeBack: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onChanged { value in
+                if !isEdgeDragging {
+                    // Chỉ bắt đầu khi chạm từ mép trái và hướng kéo chủ yếu là ngang (không cướp thao tác cuộn danh sách)
+                    guard value.startLocation.x < edgeWidth,
+                          value.translation.width > abs(value.translation.height) else { return }
+                    isEdgeDragging = true
+                }
+                dragX = max(0, value.translation.width)
+            }
+            .onEnded { value in
+                guard isEdgeDragging else { return }
+                isEdgeDragging = false
+                if value.translation.width > commitDistance || value.predictedEndTranslation.width > 220 {
+                    goBack()
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragX = 0 }
+                }
+            }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -36,20 +69,15 @@ struct OfflineLibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        if let onBack = onBack {
-                            onBack()
-                        } else {
-                            dismiss()
-                        }
+                        goBack()
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 15, weight: .semibold))
-                            Text("Quay lại")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                        .foregroundStyle(.white)
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(Color.white.opacity(0.16)))
                     }
+                    .accessibilityLabel("Quay lại")
                 }
             }
             .fullScreenCover(item: $playingVideo) { video in
@@ -73,6 +101,9 @@ struct OfflineLibraryView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .offset(x: dragX)
+        // simultaneousGesture: không chặn cuộn danh sách / bấm nút; chỉ hoạt động khi bắt đầu từ mép trái
+        .simultaneousGesture(edgeSwipeBack)
     }
 }
 
