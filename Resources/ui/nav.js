@@ -44,6 +44,7 @@
       -webkit-backdrop-filter: none !important;
       overflow: hidden !important;
       transform: translate3d(-50%, 0, 0) !important;
+      will-change: transform;
       transition: transform 0.38s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.25s ease !important;
       pointer-events: auto !important;
       z-index: 999 !important;
@@ -118,10 +119,14 @@
   // ── 1. Pill trượt theo tab đang chọn ─────────────────────────────────────
   let pivotEl = null, pill = null, mo = null, ro = null, placed = false, raf = 0;
 
-  const isSelected = (el) =>
-    el.classList.contains('iron-selected') ||
-    el.getAttribute('aria-selected') === 'true' ||
-    el.getAttribute('aria-current') === 'page';
+  // Tầng 1: dấu hiệu "đang chọn" do YouTube gắn (class kết thúc bằng "selected" như iron-selected, hoặc aria-*), trên tab hoặc phần tử con.
+  // Loại "unselected". Không phụ thuộc đúng một tên class vì YouTube đổi tên khá thường xuyên.
+  const SELECTED_CLASS = /(^|[-_])selected$/i;
+  const markedSelected = (n) =>
+    n.getAttribute('aria-selected') === 'true' ||
+    ['page', 'true'].includes(n.getAttribute('aria-current') || '') ||
+    [...n.classList].some((c) => SELECTED_CLASS.test(c) && !/un-?selected|not-selected/i.test(c));
+  const isSelected = (el) => markedSelected(el) || [...el.querySelectorAll('*')].some(markedSelected);
 
   const tabPath = (el) => {
     const a = el.matches('a[href]') ? el : el.querySelector('a[href]');
@@ -129,9 +134,33 @@
     try { return normPath(new URL(a.getAttribute('href'), location.href).pathname); } catch (_) { return null; }
   };
 
+  // Tầng 2: suy ra từ URL hiện tại → khớp tab theo href / nhãn chữ (nhãn bị ẩn bằng CSS nhưng vẫn nằm trong DOM) / vị trí
+  const currentKey = () => {
+    const p = normPath(location.pathname);
+    if (p === '/') return 'home';
+    if (p.startsWith('/feed/subscriptions')) return 'subs';
+    if (p.startsWith('/feed/library') || p.startsWith('/feed/you') || p.startsWith('/feed/history')) return 'you';
+    return null;
+  };
+  const KEY_LABEL = { home: /home|trang chủ/i, subs: /subscri|đăng ký/i, you: /\byou\b|library|thư viện|bạn/i };
+  const KEY_PATH = { home: '/', subs: '/feed/subscriptions', you: '/feed/library' };
+
+  let lastSelected = null;   // tab chọn gần nhất còn hợp lệ (giữ pill khi đang ở trang không thuộc tab nào)
+
   const selectedTab = () => {
     const tabs = [...pivotEl.querySelectorAll('ytm-pivot-bar-item-renderer')];
-    return tabs.find(isSelected) || tabs.find((t) => tabPath(t) === normPath(location.pathname)) || null;
+    if (!tabs.length) return null;
+    let found = tabs.find(isSelected);
+    if (!found) {
+      const key = currentKey();
+      if (key) {
+        found = tabs.find((t) => tabPath(t) === KEY_PATH[key]) ||
+          tabs.find((t) => KEY_LABEL[key].test((t.getAttribute('aria-label') || '') + ' ' + t.textContent)) ||
+          (key === 'home' ? tabs[0] : key === 'subs' ? tabs[1] : tabs[tabs.length - 1]);
+      }
+    }
+    if (found) lastSelected = found;
+    return found || (lastSelected && lastSelected.isConnected ? lastSelected : null);
   };
 
   const place = (tab) => {
@@ -173,6 +202,7 @@
   function schedule() { if (!raf) raf = requestAnimationFrame(sync); }
 
   // ── 2. Bấm tab: pill chạy ngay (không đợi YouTube đổi class); bấm lại tab đang chọn → cuộn lên đầu ──
+  let quietUntil = 0;   // sau khi đổi tab: bỏ qua sự kiện cuộn (trang đổi chiều cao → trình duyệt kẹp scroll, sinh scroll giả)
   document.addEventListener('click', (e) => {
     const tab = e.target.closest && e.target.closest('ytm-pivot-bar-item-renderer');
     if (!tab) return;
@@ -182,7 +212,13 @@
       if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+    lastSelected = tab;
     place(tab);
+    // Đổi tab: nội dung cũ (dài) bị thay bằng nội dung mới (ngắn) trong lúc scrollY còn lớn → WebKit kẹp scroll bằng hiệu ứng đàn hồi
+    // và phần tử fixed ở đáy (capsule) bị nảy lên rồi hạ xuống. Về đầu trang NGAY (không animate) trước khi trang đổi để tránh nảy.
+    quietUntil = Date.now() + 900;
+    if (window.scrollY > 0) window.scrollTo(0, 0);
+    setHidden(false);
   }, true);
 
   // ── 3. Tự ẩn khi cuộn, có ngưỡng (hysteresis) để không nhấp nháy ─────────
@@ -201,6 +237,7 @@
 
   const onScrollFrame = () => {
     ticking = false;
+    if (Date.now() < quietUntil) { lastY = Math.max(0, window.scrollY); acc = 0; return; }
     const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     const rawY = window.scrollY;
     if (rawY > maxY) { lastY = maxY; return; }      // đàn hồi cuối trang: bỏ qua
