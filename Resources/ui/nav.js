@@ -26,7 +26,7 @@
       top: auto !important;
       right: auto !important;
       left: 50% !important;
-      bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 4px) !important;   /* khoảng cách tới mép dưới (an toàn): chỉnh số này để nâng/hạ capsule */
       width: min(calc(100vw - 52px), 345px) !important;
       height: 54px !important;
       box-sizing: border-box !important;
@@ -109,7 +109,7 @@
 
     /* Chừa chỗ để capsule nổi không che nội dung */
     .page-container {
-      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 85px) !important;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 79px) !important;
     }
   `);
 
