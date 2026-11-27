@@ -97,14 +97,11 @@
 
   // ── Nút Back thay logo khi ở giao diện tìm kiếm ───────────────────────────
   const ICO_BACK_PATH = 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z';
-  const logoSel = (AE.LOGO_SEL || '.header-bar-logo, ytm-home-logo').split(',').map((s) => s.trim());
   const BACK_CSS = `
-    html.ae-search-ui ${logoSel.map((s) => s).join(',\n    html.ae-search-ui ')} { display: none !important; }
-    html.ae-search-ui .ae-native-back { display: none !important; }
     #ae-back {
-      flex: none; display: flex; align-items: center; justify-content: center;
-      width: 40px; height: 40px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%;
-      background: transparent; color: #fff; -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; border-radius: 50%; color: #fff;
+      -webkit-tap-highlight-color: transparent;
       transition: background-color .15s ease, transform .15s ease;
     }
     #ae-back:active { background: rgba(255,255,255,.14); transform: scale(.92); }
@@ -325,18 +322,16 @@
     }, true);
   })();
 
-  // Chỉ coi là "đang tìm kiếm" khi: ở trang kết quả /results, hoặc overlay tìm kiếm đang mở (hash #searching),
-  // hoặc ô nhập đang được focus VÀ đang hiển thị.
-  // KHÔNG dùng isSearchContext() ở đây: hàm đó coi "có thẻ <input type=search> trong DOM" là tìm kiếm, mà YouTube
-  // luôn có sẵn thẻ này (ẩn) ở mọi trang → nút back hiện cả ở Trang chủ/Hồ sơ.
-  const STRICT_SEARCH_INPUT_SEL = 'input[type="search"], input[name="search_query"]';   // không gồm type=text: ô bình luận cũng khớp
-  const isEditingSearch = () => {
-    const a = document.activeElement;
-    return !!a && a.matches && a.matches(STRICT_SEARCH_INPUT_SEL) && a.getClientRects().length > 0;
-  };
+  // Chỉ coi là "đang tìm kiếm" khi: ở trang kết quả /results, hoặc hash chứa "search", hoặc ô tìm kiếm đang được focus.
+  // KHÔNG dùng isSearchContext() (coi "có thẻ <input type=search> trong DOM" là tìm kiếm → nút back hiện cả ở Trang chủ/Hồ sơ).
+  // KHÔNG kiểm tra "ô nhập đang hiển thị": ta ẩn phần tử logo bằng CSS, nếu ẩn nhầm cha của ô nhập thì ô nhập mất → điều kiện sai →
+  // bỏ ẩn → ô nhập hiện lại → điều kiện đúng… lặp mãi = thanh tìm kiếm nhấp nháy (root cause lỗi trong video).
+  const STRICT_SEARCH_INPUT_SEL = 'input[type="search"], input[name="search_query"]';
   const isSearchUI = () => {
     if (AE.isWatching()) return false;
-    return location.pathname.startsWith('/results') || /search/i.test(location.hash) || isEditingSearch();
+    const a = document.activeElement;
+    return location.pathname.startsWith('/results') || /search/i.test(location.hash) ||
+      !!(a && a.matches && a.matches(STRICT_SEARCH_INPUT_SEL));
   };
 
   // Quay về trang trước (Trang chủ / Đăng ký / Thư viện…) theo lịch sử duyệt; hết lịch sử thì về Trang chủ
@@ -346,36 +341,33 @@
     else location.assign('/');
   };
 
-  const NATIVE_BACK_RE = /^(back|go back|quay lại|trở lại)$/i;
+  // Cách làm: KHÔNG chèn node mới vào header của YouTube (dễ làm component của họ dựng lại header / xung đột).
+  // Thay vào đó đổi NỘI DUNG của chính phần tử logo (Aether đã sở hữu nó, xem branding.js) thành mũi tên, rồi trả logo lại khi rời tìm kiếm.
+  const ARROW_HTML = '<span id="ae-back" role="button" aria-label="Quay lại"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + ICO_BACK_PATH + '"/></svg></span>';
 
+  const restoreLogo = (el) => {
+    if (el.__aeLogoHTML !== undefined) el.innerHTML = el.__aeLogoHTML;
+    delete el.__aeLogoHTML;
+    delete el.dataset.aeMode;
+  };
+
+  // Idempotent: chỉ đụng DOM khi trạng thái thật sự đổi (tránh vòng lặp với MutationObserver)
   const syncBackButton = () => {
     const on = isSearchUI();
-    document.documentElement.classList.toggle('ae-search-ui', on);
-    const existing = document.getElementById('ae-back');
-    if (!on) { if (existing) existing.remove(); return; }
-
-    const header = document.querySelector('.mobile-topbar-header, ytm-mobile-topbar-renderer');
-    if (!header) return;
-
-    // Ẩn nút back gốc (nếu có) để không bị 2 mũi tên
-    header.querySelectorAll('button, [role="button"]').forEach((b) => {
-      if (b.id === 'ae-back' || b.closest('#ae-back')) return;
-      if (NATIVE_BACK_RE.test((b.getAttribute('aria-label') || '').trim())) b.classList.add('ae-native-back');
+    document.querySelectorAll('[data-ae-mode="back"]').forEach((el) => {
+      if (!on || !el.isConnected) restoreLogo(el);
     });
+    if (!on) return;
 
-    // Chèn ngay vị trí logo (logo bị ẩn bằng CSS) → bố cục giống hệt chỗ logo cũ, không phụ thuộc cấu trúc DOM
-    const logo = header.querySelector(AE.LOGO_SEL || '.header-bar-logo');
-    const anchor = logo || header.firstElementChild;
-    if (!anchor || !anchor.parentNode) return;
-    if (existing && existing.nextElementSibling === anchor) return;   // đã đúng chỗ
-    if (existing) existing.remove();
-
-    const btn = document.createElement('button');
-    btn.id = 'ae-back';
-    btn.type = 'button';
-    btn.setAttribute('aria-label', 'Quay lại');
-    btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + ICO_BACK_PATH + '"/></svg>';
-    anchor.parentNode.insertBefore(btn, anchor);
+    document.querySelectorAll(AE.LOGO_SEL || '.header-bar-logo').forEach((el) => {
+      if (el.dataset.aeMode === 'back') return;
+      if (el.parentElement && el.parentElement.closest(AE.LOGO_SEL)) return;                 // chỉ phần tử ngoài cùng
+      if (el.matches(STRICT_SEARCH_INPUT_SEL) || el.querySelector(STRICT_SEARCH_INPUT_SEL)) return;   // không đụng phần tử chứa ô tìm kiếm
+      if (!el.getClientRects().length) return;                                              // logo đang ẩn → trang đã có nút back gốc, khỏi trùng
+      el.__aeLogoHTML = el.innerHTML;
+      el.dataset.aeMode = 'back';
+      el.innerHTML = ARROW_HTML;
+    });
   };
 
   // Capture để YouTube không xử lý chạm trước

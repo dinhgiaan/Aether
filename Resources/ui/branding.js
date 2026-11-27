@@ -48,7 +48,7 @@
       AE.LOGO_SEL
     );
     logoTargets.forEach((el) => {
-      if (el.dataset.aetherLogo) return;
+      if (el.dataset.aetherLogo || el.dataset.aeMode === 'back') return;   // aeMode=back: search.js đang dùng phần tử này làm nút quay lại
       el.dataset.aetherLogo = 'true';
       // Logo Aether (icon app) thay cho chấm tròn đỏ; sát trái hơn trước (bỏ margin/padding thừa)
       el.innerHTML = `

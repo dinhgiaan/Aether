@@ -406,6 +406,7 @@
     if (v instanceof HTMLVideoElement) {
       if (v.webkitPresentationMode === 'picture-in-picture') {
         window.__aeInPiP = true;
+        pipEnteredAt = Date.now();
         if (v.paused) v.play().catch(() => { });
       } else {
         window.__aeInPiP = false;
@@ -470,6 +471,15 @@
   let lastSystemPause = 0;
   let lastPipReq = 0;
   let lastPipExit = 0;   // lần cuối PiP thoát về inline (nút X hoặc "quay lại app")
+  let pipEnteredAt = 0;  // lần cuối iOS báo đã vào PiP
+  // Phân biệt pause do NGƯỜI DÙNG (nút X / Pause trên cửa sổ PiP) với pause do iOS lúc đang CHUYỂN vào PiP:
+  //  - pause của iOS lúc vào PiP: xảy ra khi chưa vào PiP hoặc vừa mới vào (<450ms)
+  //  - pause của nút X: xảy ra khi đã ở PiP ổn định, hoặc ngay sau khi iOS đã đổi về inline
+  // Root cause "bấm X → ~0.8s sau video tự bật lại và mở trang video": bấm X trong 3s đầu sau khi vuốt, pause này bị nhầm là
+  // pause của hệ thống (cửa sổ 3s ở pause handler + keepAlive) → media.resume() → video phát lại → bị coi là "quay lại app" → mở trang video.
+  const pipPausedByUser = (v) =>
+    (lastPipExit > lastPipReq && Date.now() - lastPipExit < 4000) ||
+    (isPiP(v) && pipEnteredAt > lastPipReq && Date.now() - pipEnteredAt > 450);
   // Chỉ tự phát lại khi pause là do hệ thống lúc vào PiP: không có chạm mới VÀ PiP chưa hề thoát sau lúc bật.
   // (Trước đây bấm X trên cửa sổ PiP → video pause → bị tự phát lại → app mở lại video.)
   const pipGuardOk = () => Date.now() - lastPipReq < 3000 && lastPipExit <= lastPipReq && lastTouch < lastPipReq + 100;
@@ -587,7 +597,7 @@
       lastPipReq = Date.now(); this.remember();
       [300, 800, 1500, 2500].forEach((ms) => setTimeout(() => {
         const cv = currentVideo();
-        if (media.wasPlaying && cv && cv.paused && !cv.ended && pipGuardOk()) media.resume();
+        if (media.wasPlaying && cv && cv.paused && !cv.ended && pipGuardOk() && !pipPausedByUser(cv)) media.resume();
       }, ms));
       try {
         if (useWK) v.webkitSetPresentationMode('picture-in-picture');
@@ -906,6 +916,7 @@
   document.addEventListener('pause', (e) => {
     if (!(e.target instanceof HTMLVideoElement)) return;
     const now = Date.now();
+    if (pipPausedByUser(e.target)) { syncNowPlaying(); return; }   // nút X / Pause trong cửa sổ PiP: tôn trọng, không tự phát lại
     if (now - lastTouch > 800) lastSystemPause = now;
     if (media.wasPlaying && now < media.keepAliveUntil) setTimeout(() => media.resume(), 60);
     // Pause xảy ra ngay sau khi bật/tắt fullscreen mà người dùng không chạm thêm → do hệ thống, phát lại

@@ -5,68 +5,93 @@
   const AE = window.AE;
   if (!AE) return;
 
+  // Thiết kế theo tab bar iOS 26 của app YouTube: capsule nổi, chỉ icon (không nhãn), pill xám trượt sau tab đang chọn.
+  // 4 tab: Home · Subscriptions · Đã tải · You. Không dùng backdrop-filter (blur realtime trên feed đang cuộn gây giật).
   AE.addCSS('nav', `
-    /* ── Bottom bar: floating capsule ───────────────────────────────────── */
+    /* Vỏ ngoài của YouTube: trong suốt, KHÔNG transform (transform sẽ biến nó thành mốc toạ độ của phần tử fixed bên trong) */
     ytm-bottom-bar-renderer {
-      left: 50% !important;
-      right: auto !important;
-      bottom: calc(env(safe-area-inset-bottom, 0px) + 14px) !important;
-      transform: translate3d(-50%, 0, 0) !important;
-      width: auto !important;
-      min-width: min(320px, 90vw) !important;
-      border-radius: 999px !important;
-      /* Nền gần đặc, KHÔNG backdrop-filter: blur realtime trên nội dung đang cuộn là nguồn giật khi lướt feed */
-      background: rgba(18, 18, 22, 0.94) !important;
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;
+      transform: none !important;
+      overflow: visible !important;
+      pointer-events: none !important;   /* chỉ capsule bên trong nhận chạm */
+    }
+
+    /* ── Capsule ─────────────────────────────────────────────────────────── */
+    ytm-pivot-bar-renderer {
+      position: fixed !important;
+      top: auto !important;
+      right: auto !important;
+      left: 50% !important;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+      width: min(calc(100vw - 52px), 345px) !important;
+      height: 54px !important;
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      padding: 4px !important;
+      gap: 0 !important;
+      display: flex !important;
+      align-items: stretch !important;
+      justify-content: space-between !important;
+      border-radius: 999px !important;
+      background: rgba(26, 26, 29, 0.95) !important;
       border: 0.5px solid rgba(255, 255, 255, 0.16) !important;
-      box-shadow:
-        inset 0 0.5px 0 rgba(255,255,255,0.12),
-        0 4px 14px rgba(0, 0, 0, 0.5) !important;
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.10), 0 6px 18px rgba(0, 0, 0, 0.55) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       overflow: hidden !important;
-      transition:
-        transform 0.38s cubic-bezier(0.25, 1, 0.5, 1),
-        opacity 0.25s ease !important;
+      transform: translate3d(-50%, 0, 0) !important;
+      transition: transform 0.38s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.25s ease !important;
+      pointer-events: auto !important;
       z-index: 999 !important;
     }
-    ytm-bottom-bar-renderer.ae-hidden {
-      transform: translate3d(-50%, 140%, 0) !important;
+    /* Trạng thái tự ẩn khi cuộn xuống */
+    ytm-pivot-bar-renderer.ae-hidden {
+      transform: translate3d(-50%, 170%, 0) !important;
       opacity: 0 !important;
       pointer-events: none !important;
     }
 
-    /* ── Tab bar inner ───────────────────────────────────────────────────── */
-    ytm-pivot-bar-renderer {
-      position: relative !important;   /* mốc toạ độ cho pill */
-      background: transparent !important;
-      border-top: none !important;
-      padding: 4px 6px !important;
-      display: flex !important;
-      justify-content: space-around !important;
-      align-items: center !important;
-    }
+    /* ── Tab: chỉ icon, chia đều 4 phần ─────────────────────────────────── */
     ytm-pivot-bar-item-renderer, .ae-dl-tab {
       position: relative !important;
-      z-index: 1 !important;           /* nằm trên pill */
-      flex: none !important;
-      min-width: 54px !important;
+      z-index: 1 !important;             /* nằm trên pill */
+      flex: 1 1 0 !important;
+      min-width: 0 !important;
+      width: auto !important;
+      height: auto !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
       border-radius: 999px !important;
-      padding: 6px 12px !important;
       background: transparent !important;
-      opacity: 0.62;
+      opacity: 0.72;
       -webkit-tap-highlight-color: transparent;
-      transition:
-        opacity 0.25s ease,
-        transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+      transition: opacity 0.25s ease, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
     }
-    ytm-pivot-bar-item-renderer.iron-selected { background: transparent !important; opacity: 1; }
+    ytm-pivot-bar-item-renderer.iron-selected { opacity: 1; }
+    ytm-pivot-bar-item-renderer > * {
+      margin: 0 !important; padding: 0 !important;
+      display: flex !important; align-items: center !important; justify-content: center !important;
+      width: 100% !important; height: 100% !important;
+    }
+    /* Ẩn nhãn chữ (Home / Subscriptions / Đã tải / You) */
+    ytm-pivot-bar-item-renderer .pivot-bar-item-title,
+    ytm-pivot-bar-item-renderer [class*="item-title"],
+    .ae-dl-tab span { display: none !important; }
+    .ae-dl-tab svg { width: 24px !important; height: 24px !important; }
 
-    /* Pill nền active: chỉ animate transform + width trên 1 phần tử tuyệt đối nhỏ → nhẹ, chạy trên GPU */
+    /* ── Pill nền active: chỉ animate transform + width trên 1 phần tử tuyệt đối nhỏ → nhẹ, chạy trên GPU ── */
     #ae-pill {
       position: absolute; left: 0; top: 4px; bottom: 4px; width: 0;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.16);
-      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.18);
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
       transform: translate3d(0, 0, 0);
       opacity: 0;
       z-index: 0;
@@ -81,13 +106,12 @@
         opacity 0.2s ease;
     }
 
-    /* Chừa chỗ để bar nổi không che nội dung */
+    /* Chừa chỗ để capsule nổi không che nội dung */
     .page-container {
       padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 85px) !important;
     }
   `);
 
-  const getBar = () => document.querySelector('ytm-bottom-bar-renderer');
   const getPivot = () => document.querySelector('ytm-pivot-bar-renderer');
   const normPath = (p) => p.replace(/\/+$/, '') || '/';
 
@@ -132,6 +156,9 @@
       if (ro) ro.disconnect();
       pivotEl = p; placed = false; changed = true;
       if (!p) return changed;
+      // Pill (absolute) cần 1 phần tử đã định vị làm mốc. TUYỆT ĐỐI không ép position:relative bằng CSS: YouTube đặt pivot là
+      // fixed ở đáy màn hình, ép relative làm cả thanh rơi vào luồng trang và trôi lên đầu trang. Chỉ bổ sung khi nó đang static.
+      try { if (getComputedStyle(p).position === 'static') p.style.position = 'relative'; } catch (_) { }
       pill = document.getElementById('ae-pill');
       if (!pill) { pill = document.createElement('div'); pill.id = 'ae-pill'; }
       mo = new MutationObserver(schedule);
@@ -168,7 +195,7 @@
     acc = 0;
     if (v === hidden) return;
     hidden = v;
-    const bar = getBar();
+    const bar = getPivot();
     if (bar) bar.classList.toggle('ae-hidden', v);
   };
 

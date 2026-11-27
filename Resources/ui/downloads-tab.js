@@ -41,7 +41,9 @@
     });
 
     // Chèn trước tab Hồ sơ
-    const lastItem = pivot.lastElementChild;
+    // Dùng tab cuối thật sự, KHÔNG dùng lastElementChild: nav.js gắn thêm #ae-pill vào pivot nên lastElementChild có thể là pill
+    const items = pivot.querySelectorAll(':scope > ytm-pivot-bar-item-renderer');
+    const lastItem = items.length ? items[items.length - 1] : pivot.lastElementChild;
     if (lastItem) {
       pivot.insertBefore(tab, lastItem);
     } else {
