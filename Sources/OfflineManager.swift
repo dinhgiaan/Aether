@@ -37,6 +37,11 @@ final class OfflineManager: NSObject, ObservableObject {
     @Published var activeDownloadTitles: [String: String] = [:]
     @Published var activeDownloadStatus: [String: String] = [:] // "12.4 MB / 45.0 MB (28%)"
     @Published var latestCompletedVideoTitle: String? = nil
+
+    /// Task đang chạy theo videoId: giữ lại để hủy được giữa chừng
+    private var downloadTasks: [String: Task<Void, Never>] = [:]
+    /// Video đã bị người dùng hủy: chặn callback muộn (tiến trình/lỗi/hoàn tất) làm "sống lại" mục đã xóa
+    private var cancelledIDs: Set<String> = []
     
     nonisolated static let videosDirectory: URL = {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -106,7 +111,7 @@ final class OfflineManager: NSObject, ObservableObject {
 
         // Khi bị 403: (1) làm mới URL cùng client 1 lần  (2) đổi sang InnerTube client khác
         let onFailure: (Error) -> Void = { [weak self] error in
-            guard let self else { return }
+            guard let self, !self.cancelledIDs.contains(videoId) else { return }   // đã hủy → không retry/báo lỗi
             let ns = error as NSError
             let isForbidden = (ns.userInfo["httpStatus"] as? Int) == 403
             let remaining = InnerTubeClient.all.filter { !tried.contains($0.name) }
@@ -148,6 +153,7 @@ final class OfflineManager: NSObject, ObservableObject {
             return
         }
         
+        cancelledIDs.remove(videoId)
         activeDownloadProgress[videoId] = 0.02
         activeDownloadTitles[videoId] = title
         activeDownloadStatus[videoId] = "Đang kết nối..."
@@ -397,7 +403,7 @@ final class OfflineManager: NSObject, ObservableObject {
         thumbFileName: String?,
         userAgent: String
     ) {
-        Task {
+        downloadTasks[videoId] = Task {
             let folder = Self.videosDirectory.appendingPathComponent(videoId, isDirectory: true)
             do {
                 try? FileManager.default.removeItem(at: folder)
@@ -424,7 +430,7 @@ final class OfflineManager: NSObject, ObservableObject {
 
                 try await HLSDownloader.download(jobs: jobs, userAgent: userAgent) { [weak self] done, total in
                     Task { @MainActor in
-                        guard let self else { return }
+                        guard let self, !self.cancelledIDs.contains(videoId) else { return }
                         let fraction = Double(done) / Double(max(total, 1))
                         self.activeDownloadProgress[videoId] = max(0.02, min(0.98, fraction))
                         self.activeDownloadStatus[videoId] = "\(done) / \(total) đoạn (\(Int(fraction * 100))%)"
@@ -481,11 +487,11 @@ final class OfflineManager: NSObject, ObservableObject {
         userAgent: String,
         onFailure: @escaping (Error) -> Void
     ) {
-        Task {
+        downloadTasks[videoId] = Task {
             do {
                 let safeTemp = try await self.downloadStreamChunked(streamURL: videoURL, fileExtension: "mp4", userAgent: userAgent, label: "video") { [weak self] progress, written, expected in
                     Task { @MainActor in
-                        guard let self = self else { return }
+                        guard let self = self, !self.cancelledIDs.contains(videoId) else { return }
                         self.activeDownloadProgress[videoId] = progress
                         let writtenStr = Self.formatBytes(written)
                         let totalStr = expected > 0 ? Self.formatBytes(expected) : "..."
@@ -529,7 +535,7 @@ final class OfflineManager: NSObject, ObservableObject {
         userAgent: String,
         onFailure: @escaping (Error) -> Void
     ) {
-        Task {
+        downloadTasks[videoId] = Task {
             var vProgress: Double = 0.0
             var aProgress: Double = 0.0
             var vWritten: Int64 = 0
@@ -539,7 +545,7 @@ final class OfflineManager: NSObject, ObservableObject {
             
             let updateProgress: @Sendable () -> Void = { [weak self] in
                 Task { @MainActor in
-                    guard let self = self else { return }
+                    guard let self = self, !self.cancelledIDs.contains(videoId) else { return }
                     let combined = (vProgress * 0.88) + (aProgress * 0.12)
                     let writtenTotal = vWritten + aWritten
                     let totalTotal = vTotal + aTotal
@@ -560,6 +566,7 @@ final class OfflineManager: NSObject, ObservableObject {
                 
                 let (vTemp, aTemp) = try await (vTask, aTask)
                 
+                guard !self.cancelledIDs.contains(videoId) else { throw CancellationError() }
                 self.activeDownloadProgress[videoId] = 0.95
                 self.activeDownloadStatus[videoId] = "Đang ghép nối & lưu video..."
                 
@@ -595,6 +602,10 @@ final class OfflineManager: NSObject, ObservableObject {
         isHLS: Bool = false
     ) {
         let destURL = Self.videosDirectory.appendingPathComponent(fileName)
+        guard !cancelledIDs.contains(videoId) else {
+            try? FileManager.default.removeItem(at: destURL)
+            return
+        }
         if isHLS {
             // HLS là playlist nhỏ + nhiều segment: chỉ cần playlist tồn tại
             guard FileManager.default.fileExists(atPath: destURL.path) else {
@@ -636,6 +647,7 @@ final class OfflineManager: NSObject, ObservableObject {
     }
     
     private func failDownload(videoId: String, message: String) {
+        guard !cancelledIDs.contains(videoId) else { return }
         activeDownloadStatus[videoId] = message
         Task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
@@ -708,7 +720,24 @@ final class OfflineManager: NSObject, ObservableObject {
         }
     }
     
+    /// Hủy tải đang chạy: dừng task, xóa file dở dang và gỡ khỏi danh sách đang tải
+    func cancelDownload(videoId: String) {
+        // Chỉ hủy được khi chưa hoàn tất (1.0 = đã lưu xong, đang dọn dẹp)
+        guard let progress = activeDownloadProgress[videoId], progress < 1.0 else { return }
+        cancelledIDs.insert(videoId)
+        downloadTasks[videoId]?.cancel()
+
+        let fm = FileManager.default
+        try? fm.removeItem(at: Self.videosDirectory.appendingPathComponent("\(videoId).mp4"))
+        try? fm.removeItem(at: Self.videosDirectory.appendingPathComponent(videoId, isDirectory: true))   // thư mục HLS
+        if !downloadedVideos.contains(where: { $0.id == videoId }) {
+            try? fm.removeItem(at: Self.videosDirectory.appendingPathComponent("\(videoId).jpg"))
+        }
+        cleanupTask(videoId: videoId)
+    }
+
     private func cleanupTask(videoId: String) {
+        downloadTasks.removeValue(forKey: videoId)
         activeDownloadProgress.removeValue(forKey: videoId)
         activeDownloadTitles.removeValue(forKey: videoId)
         activeDownloadStatus.removeValue(forKey: videoId)

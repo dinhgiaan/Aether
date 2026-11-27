@@ -250,7 +250,7 @@
     }
 
     /* Player: GHIM cố định ở đầu màn hình khi cuộn mô tả / bình luận / video đề xuất (giống app YouTube).
-       Trước đây ép position:relative nên video trôi mất khi cuộn. uienhance.js đo chiều cao player
+       Trước đây ép position:relative nên video trôi mất khi cuộn. Resources/ui (watch.js) đo chiều cao player
        (biến --ae-player-h) để body chừa chỗ, nội dung bên dưới không bị player đè lên. Bỏ qua khi đang fullscreen. */
     body.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
     body.ae-watching .player-container:not(:fullscreen):not(:-webkit-full-screen) {
@@ -267,7 +267,7 @@
       touch-action: none !important;
     }
     /* Xoay ngang: player phủ kín màn hình (iOS không cho script tự vào fullscreen nếu không có chạm,
-       nên dùng "fullscreen giả" bằng CSS; class ae-land do uienhance.js bật khi width > height) */
+       nên dùng "fullscreen giả" bằng CSS; class ae-land do Resources/ui (watch.js) bật khi width > height) */
     body.ae-land.ae-watching, body.ae-rot.ae-watching { overflow: hidden !important; }
     /* ae-rot: không xoay được app → xoay player 90° bằng CSS (kích thước hoán đổi vw/vh) */
     body.ae-rot.ae-watching #player-container-id:not(:fullscreen):not(:-webkit-full-screen),
@@ -340,7 +340,7 @@
     /* Trang watch không có thanh điều hướng dưới (tránh vùng vô hình chặn chạm vào thẻ Mix ở đáy) */
     body.ae-watching ytm-bottom-bar-renderer { display: none !important; }
 
-    /* Chừa chỗ cho player đang position:fixed: uienhance.js tự đo và thêm padding-top vào nhánh nội dung bên dưới. */
+    /* Chừa chỗ cho player đang position:fixed: Resources/ui (watch.js) tự đo và thêm padding-top vào nhánh nội dung bên dưới. */
     body.ae-land.ae-watching .watch-below-the-player, body.ae-rot.ae-watching .watch-below-the-player { display: none !important; }   /* giảm tải layout khi xoay ngang */
 
 
@@ -577,7 +577,7 @@
     // PHẢI được gọi trực tiếp trong touchend (user gesture), nếu không WebKit từ chối PiP.
     minimize() {
       const v = currentVideo();
-      // Báo kết quả cho uienhance.js để hoàn tác hiệu ứng kéo video khi PiP thất bại
+      // Báo kết quả cho Resources/ui (watch.js) để hoàn tác hiệu ứng kéo video khi PiP thất bại
       const report = (ok) => { try { window.dispatchEvent(new CustomEvent('ae:minimize-result', { detail: { ok } })); } catch (_) { } };
       if (!v || !(v.readyState >= 1)) { toast('Chưa có video để thu nhỏ'); report(false); return 'no-video'; }
       const useWK = !!(v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode('picture-in-picture'));
@@ -852,7 +852,7 @@
   // - Không dùng trình phát fullscreen native của iOS: nó tự pause video khi thoát (video đứng hình ~0.5-0.8s, nút play
   //   hiện loading) và không tự xoay ngang trong app này.
   // - Video không bị đụng vào nên thoát ra phát liền mạch, không dừng.
-  // - Class ae-land (app đã xoay ngang) hoặc ae-rot (không xoay được → xoay player 90° bằng CSS) do uienhance.js quản lý.
+  // - Class ae-land (app đã xoay ngang) hoặc ae-rot (không xoay được → xoay player 90° bằng CSS) do Resources/ui (watch.js) quản lý.
   const FS_SEL = '.fullscreen-icon, .ytp-fullscreen-button, button.fullscreen-button, .ytwPlayerBottomControlsFullscreenButtonWrapper, .player-controls-bottom-right, [aria-label*="Full screen"], [aria-label*="Toàn màn hình"], [aria-label*="toàn màn hình"], [aria-label*="Fullscreen"], [aria-label*="Exit full"], .icon-button[aria-label*="screen"]';
   let lastFsReq = 0;
   const toggleFs = () => {

@@ -31,7 +31,7 @@
         s.id = 'ae-fix-bg';
         s.textContent =
             'html,body{background:#0f0f0f!important}' +
-            // Đang kéo video xuống (class do uienhance.js gắn): nền trong suốt + ẩn mọi thứ trừ player → lộ trang chủ phía sau
+            // Đang kéo video xuống (class do Resources/ui (watch.js) gắn): nền trong suốt + ẩn mọi thứ trừ player → lộ trang chủ phía sau
             'html.ae-drag,html.ae-drag body{background:transparent!important}' +
             'html.ae-drag body{visibility:hidden!important}' +
             'html.ae-drag .ae-drag-keep,html.ae-drag .ae-drag-keep *{visibility:visible!important}';
@@ -66,7 +66,7 @@
     }
 
     // ── 4. Trang /watch đã ổn định layout ─────────────────────────────────────
-    // Mốc = tiêu đề/kênh của video (cùng mốc mà ensurePlayerSpacer trong uienhance.js dùng).
+    // Mốc = tiêu đề/kênh của video (cùng mốc mà ensurePlayerSpacer trong Resources/ui (watch.js) dùng).
     // Root cause "video đã phát mà vẫn còn vòng loading": trước đây chỉ gỡ cover khi mốc đứng yên ≥ 450ms, mà mốc hay
     // dịch chuyển lâu hơn video bắt đầu phát. Giờ video đã phát là gỡ ngay sau tối đa 450ms (hoặc 200ms nếu layout đã yên).
     if (isWatch()) {

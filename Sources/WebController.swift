@@ -80,7 +80,7 @@ final class WebController: NSObject, ObservableObject {
         config.userContentController = contentController
 
         // Script vá hiển thị (nền tối, class ae-watching sớm, báo feed/watch sẵn sàng).
-        // Phải đăng ký TRƯỚC adblock/uienhance để chạy đầu tiên.
+        // Phải đăng ký TRƯỚC adblock/ui để chạy đầu tiên.
         if let js = WebController.loadResource("aetherfix", "js") {
             contentController.addUserScript(
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -92,11 +92,13 @@ final class WebController: NSObject, ObservableObject {
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             )
         }
-        // UI enhancement: Liquid-Glass bottom nav + animations + gesture. Chỉ main frame
-        if let js = WebController.loadResource("uienhance", "js") {
-            contentController.addUserScript(
-                WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-            )
+        // UI enhancement (Resources/ui/*.js): chỉ main frame. Thứ tự quan trọng: core trước, boot cuối cùng.
+        for name in WebController.uiScripts {
+            if let js = WebController.loadResource(name, "js") {
+                contentController.addUserScript(
+                    WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+                )
+            }
         }
 
         configuration = config
@@ -363,7 +365,7 @@ final class WebController: NSObject, ObservableObject {
     
     /// Thu nhỏ video: bật PiP → giữ video sống → về trang trước.
     /// Logic nằm trong JS (__aeMedia.minimize). Gọi từ Swift không có user gesture nên WebKit có thể
-    /// từ chối PiP (JS sẽ hiện toast); cử chỉ vuốt thật chạy trong touchend ở uienhance.js.
+    /// từ chối PiP (JS sẽ hiện toast); cử chỉ vuốt thật chạy trong touchend ở Resources/ui/watch.js.
     func handleSwipeDown() {
         run("window.__aeMedia && window.__aeMedia.minimize && window.__aeMedia.minimize();")
     }
@@ -570,10 +572,17 @@ final class WebController: NSObject, ObservableObject {
         webView.evaluateJavaScript(js, in: nil, in: .page, completionHandler: nil)
     }
 
+    /// Các module giao diện JS, nạp theo đúng thứ tự này (module sau dùng namespace `window.AE` của core)
+    private static let uiScripts = [
+        "core", "branding", "nav", "downloads-tab", "search", "watch", "watch-fx", "debug", "boot"
+    ]
+
     private static func loadResource(_ name: String, _ ext: String) -> String? {
         let bundles = [Bundle(for: WebController.self), Bundle.main]
         for bundle in bundles {
-            if let url = bundle.url(forResource: name, withExtension: ext),
+            // Xcode copy phẳng vào bundle; fallback subdirectory "ui" phòng khi giữ nguyên cấu trúc thư mục
+            if let url = bundle.url(forResource: name, withExtension: ext)
+                ?? bundle.url(forResource: name, withExtension: ext, subdirectory: "ui"),
                let content = try? String(contentsOf: url, encoding: .utf8) {
                 return content
             }
