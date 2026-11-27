@@ -10,6 +10,10 @@
   AE.LOGO_SEL = '.header-bar-logo, ytm-home-logo, .topbar-header-logo-icon, a.mobile-topbar-header-endpoint, .ytm-mobile-topbar-renderer-logo';
 
   AE.addCSS('branding', `
+    /* Nền tối ngay từ document-start: tránh nháy trắng khi trang chưa vẽ xong (đặc biệt lúc kéo video lộ trang chủ).
+       Khi kéo, aetherfix.js đặt html.ae-drag { background: transparent !important } nên vẫn thắng quy tắc này. */
+    html { background-color: #0f0f0f; }
+
     /* Ẩn kệ Shorts */
     ytm-reel-shelf-renderer { display: none !important; }
 

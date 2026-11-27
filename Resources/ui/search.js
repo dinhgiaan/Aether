@@ -325,8 +325,19 @@
     }, true);
   })();
 
-  // Trang tìm kiếm = ô nhập/gợi ý (isSearchContext) hoặc trang kết quả /results
-  const isSearchUI = () => isSearchContext() || location.pathname.startsWith('/results');
+  // Chỉ coi là "đang tìm kiếm" khi: ở trang kết quả /results, hoặc overlay tìm kiếm đang mở (hash #searching),
+  // hoặc ô nhập đang được focus VÀ đang hiển thị.
+  // KHÔNG dùng isSearchContext() ở đây: hàm đó coi "có thẻ <input type=search> trong DOM" là tìm kiếm, mà YouTube
+  // luôn có sẵn thẻ này (ẩn) ở mọi trang → nút back hiện cả ở Trang chủ/Hồ sơ.
+  const STRICT_SEARCH_INPUT_SEL = 'input[type="search"], input[name="search_query"]';   // không gồm type=text: ô bình luận cũng khớp
+  const isEditingSearch = () => {
+    const a = document.activeElement;
+    return !!a && a.matches && a.matches(STRICT_SEARCH_INPUT_SEL) && a.getClientRects().length > 0;
+  };
+  const isSearchUI = () => {
+    if (AE.isWatching()) return false;
+    return location.pathname.startsWith('/results') || /search/i.test(location.hash) || isEditingSearch();
+  };
 
   // Quay về trang trước (Trang chủ / Đăng ký / Thư viện…) theo lịch sử duyệt; hết lịch sử thì về Trang chủ
   const goBack = () => {
@@ -373,6 +384,10 @@
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     goBack();
   }, true);
+
+  // pushState không bắn popstate/hashchange → bổ sung theo focus ô nhập (setTimeout 0: activeElement cập nhật sau focusout)
+  document.addEventListener('focusin', () => setTimeout(syncBackButton, 0));
+  document.addEventListener('focusout', () => setTimeout(syncBackButton, 0));
 
   AE.search = { isSearchUI, enhanceSearch, goBack };
 

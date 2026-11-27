@@ -20,6 +20,7 @@
   (() => {
     let g = null, busy = false, raf = 0, lastEl = null;
     const COMMIT_DIST = 90;
+    const PIP_PLACEHOLDER = 'offscreen';   // 'offscreen' | 'corner' (xem ghi chú v4 ở finish())
 
     // Root cause khung đen phía sau khi kéo: player (position:fixed) bị kéo đi nhưng chỗ cũ của nó vẫn là nền/placeholder
     // đen của trang video. Giờ lúc kéo: ẩn mọi thứ trừ player (CSS .ae-drag trong aetherfix.js) + báo Swift cho WebView
@@ -91,13 +92,17 @@
         lastEl = s.el;
         if (s.el) {
           s.el.style.transition = 'none'; s.el.style.transform = ''; s.el.style.opacity = ''; s.el.style.willChange = ''; void s.el.offsetHeight;   // ép tính layout để đo khung gốc
-          // v3: khối đen cỡ video vẫn còn vì iOS vẫn vẽ chỗ trống đen đúng tại khung <video> lúc bật PiP. Thay vì để video nằm
-          // nguyên khung to ở giữa, thu nó về cỡ cửa sổ PiP (~190px) sát góc dưới-phải ngay trước khi bật PiP → vùng đen (nếu còn)
-          // nhỏ và nằm ngay dưới cửa sổ PiP nên không còn nhìn thấy.
+          // v4: iOS vẫn vẽ 1 khối đen đúng tại khung <video> lúc bật PiP (~0.7s, tới khi resetPlayer chạy). v3 giả định cửa sổ PiP
+          // nằm ở góc dưới-phải để che khối đó, nhưng iOS nhớ vị trí PiP lần trước (có thể ở trên/giữa) → khối đen lộ ra.
+          // Giờ đẩy khung video xuống NGAY DƯỚI mép màn hình (thu nhỏ cỡ PiP): khối đen nằm ngoài vùng nhìn thấy, không phụ thuộc
+          // vị trí cửa sổ PiP. Nếu thiết bị không bật được PiP ở chế độ này, đổi PIP_PLACEHOLDER về 'corner' để dùng lại v3.
           try {
             const r = s.el.getBoundingClientRect();
             const pw = Math.min(190, r.width * 0.5), sc = pw / Math.max(1, r.width);
-            const tx = window.innerWidth - pw - 16, ty = window.innerHeight - pw * 9 / 16 - 110 - r.top;
+            const tx = window.innerWidth - pw - 16;
+            const ty = (PIP_PLACEHOLDER === 'offscreen')
+              ? window.innerHeight + 8 - r.top                                  // mép trên của video nằm dưới đáy màn hình
+              : window.innerHeight - pw * 9 / 16 - 110 - r.top;                  // v3: sát góc dưới-phải
             s.el.style.transformOrigin = '0 0';
             s.el.style.transform = 'translate3d(' + tx.toFixed(0) + 'px,' + ty.toFixed(0) + 'px,0) scale(' + sc.toFixed(3) + ')';
             void s.el.offsetHeight;

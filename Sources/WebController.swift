@@ -138,12 +138,16 @@ final class WebController: NSObject, ObservableObject {
         return wv
     }
 
+    /// #0f0f0f giống nền YouTube dark
+    private static let darkBackground = UIColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 1)
+
     private func configure(_ wv: WKWebView) {
         wv.customUserAgent = Config.userAgent
         wv.allowsBackForwardNavigationGestures = true
         wv.isOpaque = true
         wv.backgroundColor = .black
         wv.scrollView.backgroundColor = .black
+        wv.underPageBackgroundColor = Self.darkBackground   // không lộ nền trắng khi nội dung chưa vẽ
         // Fix: safe-area trên trang login bị trắng — để WKWebView tự quản lý inset
         wv.scrollView.contentInsetAdjustmentBehavior = .automatic
         wv.navigationDelegate = self
@@ -279,6 +283,7 @@ final class WebController: NSObject, ObservableObject {
         let color: UIColor = on ? .clear : .black
         wv.backgroundColor = color
         wv.scrollView.backgroundColor = color
+        wv.underPageBackgroundColor = on ? .clear : Self.darkBackground   // trong suốt khi kéo để còn thấy trang chủ phía sau
     }
 
     /// Đóng PiP (nút X, hoặc mở video mới): dừng và huỷ WebView đang giữ
