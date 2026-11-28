@@ -38,7 +38,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home:      return URL(string: "https://m.youtube.com/")
         case .subs:      return URL(string: "https://m.youtube.com/feed/subscriptions")
-        case .you:       return URL(string: "https://m.youtube.com/feed/you")
+        case .you:       return URL(string: "https://m.youtube.com/feed/library")
         case .downloads: return nil
         }
     }

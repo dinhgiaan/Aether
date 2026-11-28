@@ -81,16 +81,35 @@
     try { return normPath(new URL(a.getAttribute('href'), location.href).pathname); } catch (_) { return null; }
   };
 
-  // Bấm hộ tab gốc của YouTube. Trả về true nếu tìm thấy; false → Swift nạp URL dự phòng.
+  // URL đích mặc định + nạp cứng (cả hai có thể bị thay ở test)
+  const KEY_URL = { home: '/', subs: '/feed/subscriptions', you: '/feed/library' };   // mobile web: tab "You" → /feed/library
+  const hardNavigate = (url) => (AE.hardNavigate || ((u) => location.assign(u)))(url);
+  let goToken = 0;
+
+  // Bấm hộ tab gốc của YouTube (điều hướng SPA, không tải lại trang). Trả về true nếu bắt đầu được thao tác.
+  // Root cause lỗi "bấm tab Đăng ký/Bạn nhưng trang vẫn là Trang chủ": bấm .click() lên tab đang ẩn có thể KHÔNG làm YouTube đổi trang
+  // (hàm cũ trả về true ngay lúc bấm, không kiểm tra kết quả). Giờ: sau khi bấm, nếu URL không đổi trong ~1.4s thì nạp thẳng URL đích.
   window.__aeGoTab = (key) => {
     const items = [...document.querySelectorAll('ytm-pivot-bar-item-renderer')];
     const item = items.find((t) => (KEY_PATHS[key] || []).includes(itemPath(t))) ||
       items.find((t) => KEY_LABEL[key] && KEY_LABEL[key].test((t.getAttribute('aria-label') || '') + ' ' + t.textContent));
-    if (!item) return false;
-    quietUntil = Date.now() + 900;
+    const anchor = item && item.querySelector('a[href]');
+    // Ưu tiên href thật của tab (đúng với phiên bản YouTube đang chạy), không có thì dùng URL mặc định
+    let target = KEY_URL[key];
+    try { if (anchor) target = new URL(anchor.getAttribute('href'), location.href).href; } catch (_) { }
+
+    quietUntil = Date.now() + 1800;
     setHidden(false);
     try { window.scrollTo(0, 0); } catch (_) { }
-    (item.querySelector('a[href]') || item).click();
+    if (item) (anchor || item).click();
+
+    const startPath = normPath(location.pathname);
+    const token = ++goToken;
+    setTimeout(() => {
+      if (token !== goToken) return;                       // đã có lần bấm tab mới hơn
+      if (currentKey() === key || normPath(location.pathname) !== startPath) return;   // đã sang đúng tab (hoặc ít nhất đã rời trang cũ)
+      hardNavigate(target);                                // click không có tác dụng → nạp thẳng
+    }, item ? 1400 : 0);
     return true;
   };
 
