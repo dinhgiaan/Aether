@@ -6,7 +6,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Khóa dùng chung với JS (Resources/ui/nav.js: currentKey / __aeGoTab)
+    /// Khóa dùng chung với JS (Resources/ui/nav.js)
     var key: String { rawValue }
 
     static func fromKey(_ key: String) -> AppTab? {

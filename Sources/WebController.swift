@@ -51,20 +51,60 @@ final class WebController: NSObject, ObservableObject {
         showOfflineLibrary || (!isWatching && !isSearching && !isFullscreen && !isBarHiddenByScroll)
     }
 
-    /// Mở 1 tab của YouTube (Home / Đăng ký / Bạn). Ưu tiên bấm hộ tab gốc trong DOM (điều hướng SPA, không tải lại trang);
-    /// không bấm được thì nạp URL dự phòng.
+    // MARK: - Tab: mỗi tab YouTube giữ 1 WKWebView riêng
+    //
+    // Root cause chuyển tab chậm: trước đây mọi tab dùng chung 1 WebView và mỗi lần chuyển là nạp lại trang (hoặc ép YouTube tự điều hướng)
+    // → tải lại cả feed. Giờ mỗi tab (Home / Đăng ký / Bạn) có WebView riêng nằm sẵn trong host; chuyển tab chỉ là đổi lớp hiển thị
+    // (tức thì, giữ nguyên feed và vị trí cuộn của từng tab), giống tab của một app iOS.
+    private var tabWebViews: [AppTab: WKWebView] = [:]
+
+    /// WebView của tab; chưa có thì dựng và nạp trang. isNew = true khi cần lớp phủ loading
+    private func tabWebView(for tab: AppTab) -> (view: WKWebView, isNew: Bool) {
+        if let wv = tabWebViews[tab] {
+            // Đã dựng sẵn (preload) nhưng chưa nạp được gì (vd. lỗi mạng lúc đó) → nạp lại và coi như mới
+            if wv.url == nil && !wv.isLoading, let url = tab.fallbackURL {
+                wv.load(URLRequest(url: url))
+                return (wv, true)
+            }
+            return (wv, false)
+        }
+        let wv = makeWebView()
+        hostView.install(wv)
+        tabWebViews[tab] = wv
+        if let url = tab.fallbackURL { wv.load(URLRequest(url: url)) }
+        return (wv, true)
+    }
+
+    /// Dựng sẵn tab nền khi app đã yên: lần đầu bấm tab cũng tức thì (không phải đợi tải)
+    private func preloadTab(_ tab: AppTab) {
+        guard tab != .downloads, tab != selectedTab, tabWebViews[tab] == nil, let url = tab.fallbackURL else { return }
+        let wv = makeWebView()
+        hostView.install(wv, behind: true)   // nằm sau cùng, không nhận chạm
+        tabWebViews[tab] = wv
+        wv.load(URLRequest(url: url))
+    }
+
+    /// Chuyển sang 1 tab YouTube (Home / Đăng ký / Bạn)
     func openTab(_ tab: AppTab) {
         guard tab != .downloads else { return }
-        selectedTab = tab                  // pill chạy ngay, không đợi trang
         isBarHiddenByScroll = false
-        // Đang ở trang video (mở thư viện từ nút tải nổi): đóng video trước để quay về WebView duyệt
-        if webView !== browseWebView { closeWatch() }
-        let target = webView
-        let js = "window.__aeGoTab ? window.__aeGoTab('\(tab.key)') : false"
-        Task { @MainActor in
-            let ok = (try? await target.evaluateJavaScript(js, in: nil, contentWorld: .page)) as? Bool ?? false
-            if !ok, let url = tab.fallbackURL { target.load(URLRequest(url: url)) }
-        }
+        // Đang ở trang video (mở thư viện từ nút tải nổi): đóng video để quay về trang duyệt trước
+        if webView !== browseWebView { closeWatch(instant: true) }
+        guard tab != selectedTab else { return }
+
+        let old: WKWebView = browseWebView
+        let (target, isNew) = tabWebView(for: tab)
+        selectedTab = tab                  // pill chạy ngay
+        browseWebView = target
+        webView = target
+        observeURL()
+        updateWatching()
+        isFullscreen = false
+        isSearching = false
+        // Báo JS của trang tab đó gửi lại trạng thái (tìm kiếm / thanh cuộn) để Swift đồng bộ với đúng trang đang hiển thị
+        target.evaluateJavaScript("window.__aeReport && window.__aeReport();", in: nil, in: .page, completionHandler: nil)
+        // Tab mới nạp: phủ lớp loading tới khi xong. Tab đã có sẵn: crossfade nhẹ, tức thì
+        hostView.present(target, sending: old, showCover: isNew, animated: !isNew)
     }
 
     /// Bấm lại tab đang chọn: cuộn mượt lên đầu trang (không tải lại)
@@ -146,6 +186,7 @@ final class WebController: NSObject, ObservableObject {
         contentController.add(proxy, name: "aetherFeedReady")
 
         browseWebView = webView
+        tabWebViews[.home] = webView
         configure(webView)
         hostView.install(webView)
         hostView.onEdgeBack = { [weak self] in self?.handleEdgeBack() ?? false }
@@ -277,6 +318,7 @@ final class WebController: NSObject, ObservableObject {
             hostView.install(fresh, behind: true)
             fresh.load(URLRequest(url: lastBrowseURL))
             browseWebView = fresh
+            tabWebViews[selectedTab] = fresh
             needsCover = true
         }
         parkedWebView = parked
@@ -335,6 +377,9 @@ final class WebController: NSObject, ObservableObject {
         isInitialLoading = false
         // Trang chủ đã lên → dựng WebView dự phòng đầu tiên (tránh tranh tài nguyên lúc đang nạp trang)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.prewarmSpare() }
+        // Rồi dựng sẵn 2 tab còn lại, cách nhau để không tranh tài nguyên với feed trang chủ
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in self?.preloadTab(.subs) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in self?.preloadTab(.you) }
     }
 
     // Tải trang web YouTube ngay lập tức, không đợi loadBlocklist
@@ -794,9 +839,6 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     }
                     // Trạng thái thanh tab: chỉ nhận từ trang duyệt đang hiển thị (không nhận từ trang video / trang PiP ở nền)
                     if fromVisible, message.webView === target.browseWebView {
-                        if let key = dict["tab"] as? String, let tab = AppTab.fromKey(key), target.selectedTab != tab {
-                            target.selectedTab = tab
-                        }
                         if let searching = dict["searching"] as? Bool, target.isSearching != searching {
                             target.isSearching = searching
                         }
@@ -924,6 +966,12 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         if webView === parkedWebView { destroyParked(); return }
+        // Tab nền bị iOS thu hồi bộ nhớ: bỏ khỏi pool, lần chuyển tới sẽ dựng lại
+        if webView !== self.webView, let tab = tabWebViews.first(where: { $0.value === webView })?.key {
+            tabWebViews[tab] = nil
+            hostView.remove(webView)
+            return
+        }
         guard webView === self.webView else { return }
         NSLog("Aether: WebContent process terminated, tự động nạp lại...")
         webView.reload()
