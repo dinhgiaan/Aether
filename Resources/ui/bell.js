@@ -276,10 +276,31 @@
     refreshUnseen();
   };
 
+  // Root cause "bấm chuông không phản ứng": header của YouTube xử lý chạm bằng touch/pointer và nuốt luôn click tổng hợp,
+  // nên chỉ lắng nghe 'click' là không đủ. Bắt ở touchend (pha capture, chặn YouTube) rồi mở bảng; click chỉ còn là đường dự phòng
+  // (chuột/bàn phím), có chặn trùng để không mở 2 lần.
+  let touch = null, swallowUntil = 0;
+  const onBell = (e) => !!(e.target && e.target.closest && e.target.closest('#ae-bell'));
+  const toggle = () => { if (panel && panel.classList.contains('ae-open')) closePanel(); else openPanel(); };
+  window.addEventListener('touchstart', (e) => {
+    touch = null;
+    if (e.touches.length !== 1 || !onBell(e)) return;
+    touch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true, capture: true });
+  window.addEventListener('touchend', (e) => {
+    const st = touch; touch = null;
+    if (!st || !e.changedTouches.length) return;
+    const t = e.changedTouches[0];
+    if (Math.hypot(t.clientX - st.x, t.clientY - st.y) > 10) return;       // kéo, không phải chạm
+    e.preventDefault(); e.stopImmediatePropagation();
+    swallowUntil = Date.now() + 600;
+    toggle();
+  }, { passive: false, capture: true });
   window.addEventListener('click', (e) => {
-    if (!e.target.closest?.('#ae-bell')) return;
+    if (!onBell(e)) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    openPanel();
+    if (Date.now() < swallowUntil) return;       // click tổng hợp sau touchend vừa xử lý
+    toggle();
   }, true);
 
   AE.on('ready', () => {

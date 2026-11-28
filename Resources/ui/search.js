@@ -104,6 +104,7 @@
       -webkit-tap-highlight-color: transparent;
       transition: background-color .15s ease, transform .15s ease;
     }
+    html.ae-force-close-search .ytSearchboxComponentSuggestionsContainer, html.ae-force-close-search c3-overlay { display: none !important; }
     #ae-back:active { background: rgba(255,255,255,.14); transform: scale(.92); }
     #ae-back svg { width: 24px; height: 24px; fill: currentColor; display: block; pointer-events: none; }
   `;
@@ -383,7 +384,7 @@
   window.addEventListener('click', (e) => {
     if (!e.target.closest?.('#ae-back')) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    goBack();
+    if (location.pathname.startsWith('/results')) backFromResults(); else goBack();   // ở /results: đóng gợi ý trước, rồi mới quay lại
   }, true);
 
   // ── Nút Back gốc của YouTube trên trang kết quả /results ──────────────────
@@ -399,17 +400,52 @@
     return r.left < 72 && r.bottom < 80 && r.width < 80;                  // nút nhỏ nằm sát góc trên-trái
   };
 
-  // Đang mở gợi ý trên trang kết quả → Back chỉ đóng gợi ý (ở lại trang kết quả), như app gốc
-  const closeSuggestions = () => {
-    if (!location.pathname.startsWith('/results')) return false;
+  // Đang mở gợi ý trên trang kết quả → Back chỉ đóng gợi ý (ở lại trang kết quả), như app gốc.
+  // Root cause "Back có haptic mà không đóng được": chỉ blur + click nút ẩn .overlay-close-button là chưa đủ để YouTube thoát chế độ tìm kiếm.
+  // Thử lần lượt các cách, sau mỗi cách kiểm tra đã đóng chưa: (1) bấm nút ← gốc trong header, (2) blur + nút đóng lớp phủ,
+  // (3) phím Escape, (4) ép ẩn bằng CSS (chỉ khi các cách trên đều không được).
+  let selfClicking = false;
+  const searchOpen = () => {
     const a = document.activeElement;
-    const focused = !!(a && a.matches && a.matches('input, textarea'));
-    if (!suggestionsOpen() && !focused) return false;
-    try { a && a.blur && a.blur(); } catch (_) { }
-    const close = document.querySelector('c3-overlay .overlay-close-button, .overlay-close-button');
-    if (close) { try { close.click(); } catch (_) { } }
+    return suggestionsOpen() || !!(a && a.matches && a.matches('input, textarea'));
+  };
+  const nativeBackButton = () => {
+    const header = document.querySelector('ytm-mobile-topbar-renderer, header.mobile-topbar-header');
+    if (!header) return null;
+    return [...header.querySelectorAll('button, a, [role="button"]')].find((b) => {
+      if (b.id === 'ae-bell' || b.id === 'ae-back' || b.closest('#ae-back') || (b.textContent || '').trim()) return false;
+      if (b.matches(STRICT_SEARCH_INPUT_SEL) || b.querySelector(STRICT_SEARCH_INPUT_SEL)) return false;
+      const r = b.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.left < 72 && r.right < 110 && r.bottom < 90;
+    }) || null;
+  };
+  const clickNative = (el) => { selfClicking = true; try { el.click(); } catch (_) { } selfClicking = false; };
+  const closeSteps = [
+    () => { const b = nativeBackButton(); if (b) clickNative(b); },
+    () => {
+      try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch (_) { }
+      const c = document.querySelector('c3-overlay .overlay-close-button, .overlay-close-button');
+      if (c) clickNative(c);
+    },
+    () => {
+      const target = document.activeElement || document;
+      ['keydown', 'keyup'].forEach((type) => target.dispatchEvent(new KeyboardEvent(type, { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true })));
+    },
+    () => document.documentElement.classList.add('ae-force-close-search'),
+  ];
+  const closeSuggestions = () => {
+    if (!location.pathname.startsWith('/results') || !searchOpen()) return false;
+    let i = 0;
+    const next = () => {
+      if (i >= closeSteps.length || !searchOpen()) return;
+      closeSteps[i++]();
+      setTimeout(next, 260);
+    };
+    next();
     return true;
   };
+  // Cách (4) tự gỡ khi người dùng bấm vào ô tìm kiếm lại
+  document.addEventListener('focusin', () => document.documentElement.classList.remove('ae-force-close-search'), true);
 
   const backFromResults = () => {
     if (closeSuggestions()) return;
@@ -426,7 +462,7 @@
   };
 
   window.addEventListener('click', (e) => {
-    if (!location.pathname.startsWith('/results') || !isHeaderBackTap(e.target)) return;
+    if (selfClicking || !location.pathname.startsWith('/results') || !isHeaderBackTap(e.target)) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     backFromResults();
   }, true);

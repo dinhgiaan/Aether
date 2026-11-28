@@ -5,10 +5,13 @@
   if (!AE) return;
 
   // ── 5e. Gỡ lỗi: giữ 3 ngón tay ~0.7s trên trang → copy sơ đồ DOM vào clipboard để dán gửi lập trình viên ──
-  const dumpDom = () => {
+  const dumpDom = (headerMode) => {
     const out = [];
     // Đang mở panel (bình luận, hàng đợi…): chỉ dump riêng panel đó, sâu hơn + kèm cỡ chữ / kích thước ảnh (tránh bị player + thumbnail ăn hết dung lượng)
-    const panelEl = [...document.querySelectorAll('ytm-engagement-panel-section-list-renderer')].find((e) => e.getBoundingClientRect().height > 100);
+    // Giữ 3 ngón ở mép trên màn hình (y < 110) → chỉ dump header; ngược lại nếu đang mở panel → dump panel
+    const panelEl = headerMode
+      ? document.querySelector('ytm-mobile-topbar-renderer, header.mobile-topbar-header')
+      : [...document.querySelectorAll('ytm-engagement-panel-section-list-renderer')].find((e) => e.getBoundingClientRect().height > 100);
     const SKIP = panelEl ? /^(SCRIPT|STYLE|SVG|PATH|LINK|META|NOSCRIPT|YT-ICON|C3-ICON)$/i : /^(SCRIPT|STYLE|SVG|PATH|LINK|META|NOSCRIPT|IMG|YT-ICON|C3-ICON)$/i;
     const maxDepth = panelEl ? 18 : 11;
     const walk = (el, depth) => {
@@ -40,7 +43,7 @@
       ' | scrollY ' + Math.round(scrollY) + ' | body.class=' + document.body.className + ' | --ae-pad: ' +
       [...document.querySelectorAll('[style*="padding-top"]')].map((e) => e.tagName.toLowerCase() + ':' + e.style.paddingTop).join(',');
     walk(panelEl || document.body, 0);
-    if (panelEl) return head + '\n== PANEL ' + panelEl.tagName.toLowerCase() + '.' + String(panelEl.className).trim().split(/\s+/).join('.') + ' ==\n' + out.join('\n').slice(0, 20000);
+    if (panelEl) return head + '\n== ' + (headerMode ? 'HEADER ' : 'PANEL ') + panelEl.tagName.toLowerCase() + '.' + String(panelEl.className).trim().split(/\s+/).join('.') + ' ==\n' + out.join('\n').slice(0, 20000);
     // Các lớp phủ lớn (bottom sheet, panel, dialog): position fixed/absolute chiếm > 20% màn hình, kèm chuỗi tổ tiên
     const ov = [];
     const vw = innerWidth, vh = innerHeight;
@@ -64,9 +67,10 @@
     window.addEventListener('touchstart', (e) => {
       clearTimeout(timer);
       if (e.touches.length !== 3) return;
+      const headerMode = [...e.touches].every((t) => t.clientY < 110);
       timer = setTimeout(() => {
         try {
-          const text = dumpDom();
+          const text = dumpDom(headerMode);
           window.webkit.messageHandlers.aetherNav.postMessage({ action: 'debugDump', text });
         } catch (_) { }
       }, 700);
