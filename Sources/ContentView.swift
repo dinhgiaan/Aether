@@ -46,6 +46,14 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: web.isFullscreen ? .all : .bottom)   // xoay ngang: phủ kín cả tai thỏ, không còn viền đen 2 bên
 
+            // Skeleton của tab đang tải (đúng bố cục Home / Đăng ký / Bạn). Nằm trên WebView, dưới thanh tab + splash
+            if let kind = web.skeleton, !web.isWatching {
+                SkeletonView(kind: kind)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .zIndex(5)
+            }
+
             // Nút Back native phủ lên mũi tên ← của header khi tìm kiếm (/results hoặc lớp phủ tìm kiếm).
             // Root cause "bấm Back không được": chạm trong WebView bị YouTube/WKWebView nuốt → dùng lớp native bắt chạm trước.
             if web.isSearching && !web.isWatching && !web.isFullscreen && !web.showOfflineLibrary {
@@ -143,6 +151,7 @@ struct ContentView: View {
         }
         .statusBarHidden(web.isFullscreen)
         .animation(.easeInOut(duration: 0.3), value: showSplash)
+        .animation(.easeOut(duration: 0.25), value: web.skeleton)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: bannerID)
         // Dọn danh sách đã ẩn khi video đó tải xong/bị hủy
         .onChange(of: downloads.activeIDs) { _, ids in
@@ -151,9 +160,9 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: web.showOfflineLibrary)
         .task {
             web.start()
-            // Bảo hiểm: mạng quá chậm / môi trường LiveContainer → sau 4s vẫn cho vào app.
+            // Bảo hiểm: mạng quá chậm / môi trường LiveContainer → sau 1.7s vẫn cho vào app (+0.3s mờ dần = tối đa ~2s).
             // Gọi dismissSplash() để isInitialLoading đổi → splash tự chạy animation thoát (không tắt cái "phựt")
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: 1_700_000_000)
             web.dismissSplash()
         }
         // Sheet chọn chất lượng tải xuống

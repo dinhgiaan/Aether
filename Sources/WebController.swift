@@ -35,6 +35,10 @@ final class WebController: NSObject, ObservableObject {
     @Published var isWatching = false
     /// true từ lúc app mở đến khi trang YouTube đầu tiên load xong → ẩn splash
     @Published var isInitialLoading = true
+    /// Skeleton đang hiển thị (nil = trang của tab đã vẽ xong). Mở app = Home đang tải nên mặc định .home
+    @Published var skeleton: SkeletonKind? = .home
+    /// Các tab đã vẽ xong nội dung (feed có video, hoặc trang đã load + 1.5s)
+    private var readyTabs: Set<AppTab> = []
     /// Thông tin download khi người dùng bấm Tải xuống video hiện tại
     @Published var activeDownloadInfo: VideoDownloadInfo?
     @Published var showDownloadSheet = false
@@ -103,8 +107,33 @@ final class WebController: NSObject, ObservableObject {
         isSearching = false
         // Báo JS của trang tab đó gửi lại trạng thái (tìm kiếm / thanh cuộn) để Swift đồng bộ với đúng trang đang hiển thị
         target.evaluateJavaScript("window.__aeReport && window.__aeReport();", in: nil, in: .page, completionHandler: nil)
-        // Tab mới nạp: phủ lớp loading tới khi xong. Tab đã có sẵn: crossfade nhẹ, tức thì
-        hostView.present(target, sending: old, showCover: isNew, animated: !isNew)
+        // Tab chưa vẽ xong: hiện skeleton đúng bố cục trang (thay cho vòng xoay), đổi lớp tức thì.
+        // Tab đã sẵn sàng: crossfade nhẹ.
+        if isNew { readyTabs.remove(tab) }
+        updateSkeleton(for: tab)
+        hostView.present(target, sending: old, showCover: false, animated: skeleton == nil)
+    }
+
+    // MARK: - Skeleton
+
+    private func tab(of wv: WKWebView) -> AppTab? { tabWebViews.first { $0.value === wv }?.key }
+
+    /// Trang của WebView này đã vẽ xong → đánh dấu sẵn sàng; nếu là tab đang xem thì bỏ skeleton
+    func markReady(_ wv: WKWebView?) {
+        guard let wv, let tab = tab(of: wv) else { return }
+        readyTabs.insert(tab)
+        if tab == selectedTab, skeleton != nil { skeleton = nil }
+    }
+
+    /// Hiện skeleton nếu tab chưa sẵn sàng (kèm bảo hiểm 8s để không bao giờ treo skeleton)
+    private func updateSkeleton(for tab: AppTab) {
+        if readyTabs.contains(tab) { skeleton = nil; return }
+        skeleton = SkeletonKind(tab: tab)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, self.selectedTab == tab else { return }
+            self.readyTabs.insert(tab)
+            self.skeleton = nil
+        }
     }
 
     /// Bấm lại tab đang chọn: cuộn mượt lên đầu trang (không tải lại)
@@ -667,7 +696,7 @@ final class WebController: NSObject, ObservableObject {
 
     /// Các module giao diện JS, nạp theo đúng thứ tự này (module sau dùng namespace `window.AE` của core)
     private static let uiScripts = [
-        "core", "branding", "nav", "search", "bell", "watch", "watch-fx", "debug", "boot"
+        "core", "branding", "nav", "search", "bell", "watch", "comments", "watch-fx", "debug", "boot"
     ]
 
     private static func loadResource(_ name: String, _ ext: String) -> String? {
@@ -827,6 +856,7 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                 break   // bắn ở DOMContentLoaded (quá sớm, feed chưa vẽ) → không dùng để tắt splash nữa
             case "aetherFeedReady":
                 target.dismissSplash()   // feed trang chủ đã có nội dung thật
+                target.markReady(message.webView)
             case "nowPlaying":
                 if let dict = message.body as? [String: Any] {
                     target.updateNowPlaying(dict: dict)
@@ -972,6 +1002,10 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
                 self.hostView.hideCover(force: true)
             }
         }
+        // Dự phòng khi trang không có video để báo "feed ready" (vd. tab Bạn trống): load xong + 1.5s coi như đã vẽ
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak webView] in
+            self?.markReady(webView)
+        }
         // WebView dự phòng (spare) không nạp gì nên không đi tới đây
     }
 
@@ -980,6 +1014,7 @@ extension WebController: WKNavigationDelegate, WKUIDelegate {
         // Tab nền bị iOS thu hồi bộ nhớ: bỏ khỏi pool, lần chuyển tới sẽ dựng lại
         if webView !== self.webView, let tab = tabWebViews.first(where: { $0.value === webView })?.key {
             tabWebViews[tab] = nil
+            readyTabs.remove(tab)
             hostView.remove(webView)
             return
         }

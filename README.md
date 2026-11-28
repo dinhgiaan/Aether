@@ -14,7 +14,7 @@ Client YouTube cá nhân cao cấp (SwiftUI + WKWebView): Chặn quảng cáo đ
 - ❌ **Sạch bóng Shorts & Rác**: Xóa hoàn toàn tab Shorts, kệ Shorts trang chủ, video gợi ý Shorts; xóa các nút Films, Help, Feedback, YouTube Premium ở mục Hồ sơ; xóa nút la bàn bên cạnh thanh lọc chủ đề.
 - ✨ **Header & Tìm kiếm**: Logo YouTube chuẩn như app gốc (không thêm chữ); khi tìm kiếm logo đổi thành nút mũi tên quay về trang trước; làm mới giao diện lịch sử tìm kiếm và thu gọn bình luận 15% tinh tế.
 - 📥 **Banner tiến trình tải**: Vuốt lên/sang ngang để ẩn, nút ✕ để hủy tải.
-- ⚡ **Khởi động siêu tốc**: Splash screen pop-up mượt mà và tự động vào app ngay trong ~0.8s.
+- ⚡ **Khởi động siêu tốc**: Splash logo bật nhẹ kiểu app gốc, vào app ngay khi feed vẽ xong (tối đa ~2s). Mỗi tab đang tải hiện skeleton đúng bố cục trang (Home / Đăng ký / Bạn).
 
 ## Build
 Push lên `main` → GitHub Actions tự động build → tải `YouTube-BlockAds.ipa` ở mục **Releases** (tag `latest`).
@@ -30,6 +30,7 @@ Cài file `YouTube-BlockAds.ipa` qua **LiveContainer** / TrollStore / AltStore /
 | `Sources/OfflineLibraryView.swift` | Giao diện danh sách video ngoại tuyến & Native AVPlayer |
 | `Sources/ContentView.swift` | Giao diện chính SwiftUI, ghép các view con |
 | `Sources/Views/SplashView.swift` | Splash giống app YouTube gốc: nền tối + logo giữa màn hình, mờ dần khi feed đã vẽ |
+| `Sources/Views/SkeletonView.swift` | Skeleton có shimmer cho Home / Đăng ký / Bạn khi trang đang tải |
 | `Sources/Views/DownloadQualitySheet.swift` | Sheet chọn chất lượng tải xuống |
 | `Sources/Views/NativeTabBar.swift` | Thanh tab native: Home · Đăng ký · Đã tải · Bạn, pill nền trượt bằng `matchedGeometryEffect` |
 | `Sources/Views/DownloadProgressBanner.swift` | Banner tiến trình tải (vuốt để ẩn, nút hủy) |
@@ -42,6 +43,7 @@ Cài file `YouTube-BlockAds.ipa` qua **LiveContainer** / TrollStore / AltStore /
 | `Resources/ui/search.js` | Giao diện lịch sử/gợi ý tìm kiếm, nút Back thay logo |
 | `Resources/ui/bell.js` | Nút chuông thông báo cạnh nút tìm kiếm, mở trang thông báo của YouTube |
 | `Resources/ui/watch.js` | Trang xem video: vuốt xuống PiP, player ghim, fullscreen giả, vuốt mép trái để quay lại |
+| `Resources/ui/comments.js` | Thu gọn bảng bình luận: avatar nhỏ lại, chữ/khoảng cách thu ~14% |
 | `Resources/ui/watch-fx.js` | Animation trả lời bình luận, panel hàng đợi Mix |
 | `Resources/ui/debug.js` | Gỡ lỗi: giữ 3 ngón tay để copy sơ đồ DOM |
 | `Resources/ui/boot.js` | Nối sự kiện điều hướng + MutationObserver (nạp cuối cùng) |

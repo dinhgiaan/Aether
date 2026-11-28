@@ -8,9 +8,9 @@ struct SplashView: View {
     // Cùng màu nền với trang YouTube dark (#0f0f0f) để lúc chuyển sang WebView không bị lệch màu
     private let background = Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255)
     // Logo luôn hiện tối thiểu chừng này, tránh nháy nếu trang load quá nhanh
-    private let minimumDisplayTime: TimeInterval = 0.6
+    private let minimumDisplayTime: TimeInterval = 0.5
 
-    @State private var logoScale: CGFloat = 0.92
+    @State private var logoScale: CGFloat = 0.78
     @State private var logoOpacity: Double = 0.0
     @State private var introDone = false   // đã hiện đủ thời gian tối thiểu
     @State private var exiting = false     // đã bắt đầu thoát (chặn gọi onFinished 2 lần)
@@ -42,10 +42,9 @@ struct SplashView: View {
 
     /// Logo hiện nhẹ và phóng về đúng cỡ, sau đó chờ đủ thời gian tối thiểu
     private func runIntro() {
-        withAnimation(.easeOut(duration: 0.3)) {
-            logoScale = 1.0
-            logoOpacity = 1.0
-        }
+        // Giống app YouTube gốc: logo bật nhẹ vào (spring) thay vì chỉ hiện dần
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.62)) { logoScale = 1.0 }
+        withAnimation(.easeOut(duration: 0.18)) { logoOpacity = 1.0 }
         DispatchQueue.main.asyncAfter(deadline: .now() + minimumDisplayTime) {
             introDone = true
             tryExit()
@@ -63,7 +62,9 @@ struct SplashView: View {
     private func finish(after delay: TimeInterval, duration: TimeInterval) {
         guard !exiting else { return }
         exiting = true
-        withAnimation(.easeOut(duration: duration)) {
+        // Thoát kiểu "xuyên qua": logo phóng to nhẹ trong lúc mờ dần để lộ trang phía sau
+        withAnimation(.easeIn(duration: duration)) {
+            logoScale = 1.18
             totalOpacity = 0.0
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
