@@ -62,6 +62,23 @@ struct ContentView: View {
                     .zIndex(5)
             }
 
+            // Nút chuông native: vùng chạm trong suốt đặt đúng chỗ chuông trong header (JS báo vị trí). Chạm trong trang bị YouTube nuốt,
+            // còn lớp native thì luôn nhận được (giống nút Back).
+            if let r = web.bellRect, !web.isSearching, !web.isWatching, !web.isFullscreen, !web.isSheetOpen, !web.showOfflineLibrary {
+                Color.clear
+                    .frame(width: r.width, height: r.height)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        Haptic.feedback(.light)
+                        web.toggleNotifications()
+                    }
+                    .padding(.leading, r.minX)
+                    .padding(.top, r.minY)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .zIndex(12)
+                    .accessibilityLabel("Thông báo")
+            }
+
             // Nút Back native phủ lên mũi tên ← của header khi tìm kiếm (/results hoặc lớp phủ tìm kiếm).
             // Root cause "bấm Back không được": chạm trong WebView bị YouTube/WKWebView nuốt → dùng lớp native bắt chạm trước.
             if web.isSearching && !web.isWatching && !web.isFullscreen && !web.showOfflineLibrary {

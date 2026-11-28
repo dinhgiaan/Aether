@@ -17,6 +17,8 @@
       width: 44px; height: 100%; align-items: center; justify-content: center;
       border: 0; background: transparent; color: #fff; padding: 0;
       -webkit-tap-highlight-color: transparent;
+      pointer-events: auto !important;      /* header của YouTube có thể đặt pointer-events:none → nút con kế thừa và không nhận chạm */
+      touch-action: manipulation;
     }
     #ae-bell:active svg { opacity: .6; }
     #ae-bell svg { width: 24px; height: 24px; fill: currentColor; display: block; pointer-events: none; }
@@ -253,13 +255,24 @@
     return !(AE.search && AE.search.isSearchUI());
   };
 
+  // Báo vị trí chuông cho Swift: lớp native bắt chạm đặt đúng chỗ này (không phụ thuộc hit-test của trang YouTube).
+  // Root cause "bấm chuông không có gì xảy ra": chạm trong WebView ở vùng header không tới được nút → dùng cùng đường
+  // native → JS như nút Back (đã chứng minh hoạt động, có haptic).
+  let lastRect = '';
+  const reportRect = (r) => {
+    const key = r ? [r.x, r.y, r.w, r.h].join(',') : 'null';
+    if (key === lastRect) return;
+    lastRect = key;
+    AE.post({ bellRect: r });
+  };
+
   const place = () => {
     if (!document.body) return;
     const header = document.querySelector(HEADER_SEL);
     const search = header && pickSearchButton(header);
     const hr = header && header.getBoundingClientRect();
     const sr = search && search.getBoundingClientRect();
-    if (!header || !search || !sr.width || !shouldShow()) { if (bell) bell.style.display = 'none'; return; }
+    if (!header || !search || !sr.width || !shouldShow()) { if (bell) bell.style.display = 'none'; reportRect(null); return; }
 
     if (!bell || !bell.isConnected || bell.parentElement !== header) {
       bell = document.getElementById('ae-bell') || document.createElement('button');
@@ -273,6 +286,7 @@
     bell.style.display = 'flex';
     const left = Math.round(sr.left - hr.left - 44);       // toạ độ tương đối header → dính cứng với header
     if (bell.style.left !== left + 'px') bell.style.left = left + 'px';
+    reportRect({ x: Math.max(0, Math.round(sr.left - 44)), y: Math.max(0, Math.round(sr.top)), w: 44, h: Math.max(44, Math.round(sr.height)) });
     refreshUnseen();
   };
 
@@ -302,6 +316,9 @@
     if (Date.now() < swallowUntil) return;       // click tổng hợp sau touchend vừa xử lý
     toggle();
   }, true);
+
+  // API cho Swift (nút chuông native): mở/đóng bảng thông báo, báo lại vị trí chuông khi đổi tab
+  AE.bell = { toggle, report: () => { lastRect = ''; place(); } };
 
   AE.on('ready', () => {
     window.addEventListener('resize', place, { passive: true });

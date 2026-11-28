@@ -91,6 +91,7 @@
     hidden = false; acc = 0; lastY = window.scrollY;
     lastSearching = undefined; lastSheet = undefined;
     report();
+    if (AE.bell && AE.bell.report) AE.bell.report();
   };
 
   window.__aeScrollTop = () => {

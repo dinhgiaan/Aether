@@ -49,6 +49,8 @@ final class WebController: NSObject, ObservableObject {
     @Published var isSearching = false
     /// YouTube đang mở bottom sheet / dialog (menu ⋮…) → ẩn thanh tab native để không che các mục cuối của sheet
     @Published var isSheetOpen = false
+    /// Vị trí nút chuông trong trang (toạ độ WebView) để lớp native bắt chạm; nil = chuông đang ẩn
+    @Published var bellRect: CGRect?
     /// Lớp loading đang phủ (mở video mới…) → hiện skeleton trang xem video thay vì vòng xoay trống
     @Published var isWatchLoading = false
     /// Cuộn xuống → ẩn thanh tab, cuộn lên → hiện (JS tính ngưỡng, xem Resources/ui/nav.js)
@@ -110,6 +112,7 @@ final class WebController: NSObject, ObservableObject {
         isFullscreen = false
         isSearching = false
         isSheetOpen = false
+        bellRect = nil
         // Báo JS của trang tab đó gửi lại trạng thái (tìm kiếm / thanh cuộn) để Swift đồng bộ với đúng trang đang hiển thị
         target.evaluateJavaScript("window.__aeReport && window.__aeReport();", in: nil, in: .page, completionHandler: nil)
         // Tab chưa vẽ xong: hiện skeleton đúng bố cục trang (thay cho vòng xoay), đổi lớp tức thì.
@@ -488,6 +491,11 @@ final class WebController: NSObject, ObservableObject {
     /// từ chối PiP (JS sẽ hiện toast); cử chỉ vuốt thật chạy trong touchend ở Resources/ui/watch.js.
     func handleSwipeDown() {
         run("window.__aeMedia && window.__aeMedia.minimize && window.__aeMedia.minimize();")
+    }
+
+    /// Nút chuông native: mở/đóng bảng thông báo trong trang (JS: AE.bell.toggle)
+    func toggleNotifications() {
+        run("window.AE && AE.bell && AE.bell.toggle && AE.bell.toggle();")
     }
 
     /// Nút Back native ở góc trên-trái khi đang tìm kiếm: gọi logic quay lại trong JS (AE.search.back),
@@ -891,6 +899,16 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     if fromVisible, message.webView === target.browseWebView {
                         if let searching = dict["searching"] as? Bool, target.isSearching != searching {
                             target.isSearching = searching
+                        }
+                        if let raw = dict["bellRect"] {
+                            if let r = raw as? [String: Any],
+                               let x = (r["x"] as? NSNumber)?.doubleValue, let y = (r["y"] as? NSNumber)?.doubleValue,
+                               let w = (r["w"] as? NSNumber)?.doubleValue, let h = (r["h"] as? NSNumber)?.doubleValue {
+                                let rect = CGRect(x: x, y: y, width: w, height: h)
+                                if target.bellRect != rect { target.bellRect = rect }
+                            } else if target.bellRect != nil {
+                                target.bellRect = nil
+                            }
                         }
                         if let sheet = dict["sheetOpen"] as? Bool, target.isSheetOpen != sheet {
                             target.isSheetOpen = sheet
