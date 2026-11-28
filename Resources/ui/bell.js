@@ -80,17 +80,25 @@
   };
   const hasLogin = () => !!(getCookie('SAPISID') || getCookie('__Secure-3PAPISID'));
 
-  const innertube = async (path, body) => {
+  // opts.web = true: dùng context của client WEB (desktop) thay vì MWEB — endpoint thông báo vốn chỉ có ở bản desktop nên mweb có thể trả 400
+  const innertube = async (path, body, opts) => {
     const cfg = window.ytcfg;
     const get = (k) => (cfg && typeof cfg.get === 'function' ? cfg.get(k) : undefined);
-    const key = get('INNERTUBE_API_KEY'), context = get('INNERTUBE_CONTEXT');
+    const key = get('INNERTUBE_API_KEY');
+    let context = get('INNERTUBE_CONTEXT');
     if (!key || !context) throw new Error('Trang YouTube chưa sẵn sàng, thử lại sau giây lát');
+    const web = !!(opts && opts.web);
+    if (web) {
+      context = JSON.parse(JSON.stringify(context));
+      context.client = Object.assign({}, context.client, { clientName: 'WEB', clientVersion: '2.20250101.00.00', platform: 'DESKTOP', clientFormFactor: 'UNKNOWN_FORM_FACTOR' });
+      delete context.client.mainAppWebInfo; delete context.client.userInterfaceTheme;
+    }
     const headers = {
       'Content-Type': 'application/json',
       'X-Goog-AuthUser': String(get('SESSION_INDEX') || 0),
       'X-Origin': ORIGIN,
-      'X-Youtube-Client-Name': String(get('INNERTUBE_CONTEXT_CLIENT_NAME') || 2),
-      'X-Youtube-Client-Version': String(get('INNERTUBE_CONTEXT_CLIENT_VERSION') || (context.client && context.client.clientVersion) || ''),
+      'X-Youtube-Client-Name': web ? '1' : String(get('INNERTUBE_CONTEXT_CLIENT_NAME') || 2),
+      'X-Youtube-Client-Version': web ? context.client.clientVersion : String(get('INNERTUBE_CONTEXT_CLIENT_VERSION') || (context.client && context.client.clientVersion) || ''),
     };
     const sid = getCookie('SAPISID') || getCookie('__Secure-3PAPISID');
     if (sid) {
@@ -100,8 +108,36 @@
     const res = await fetch('/youtubei/v1/' + path + '?key=' + encodeURIComponent(key) + '&prettyPrint=false', {
       method: 'POST', credentials: 'include', headers, body: JSON.stringify(Object.assign({ context }, body)),
     });
-    if (!res.ok) throw new Error('YouTube trả về lỗi ' + res.status);
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = (j && j.error && (j.error.message || j.error.status)) || ''; } catch (_) { }
+      throw new Error('HTTP ' + res.status + (detail ? ' – ' + detail : ''));
+    }
     return res.json();
+  };
+
+  // Thử lần lượt các kiểu request cho tới khi 1 kiểu được chấp nhận, rồi nhớ kiểu đó cho các lần sau.
+  const VARIANTS = [
+    { name: 'mweb+type', web: false, withType: true },
+    { name: 'mweb', web: false, withType: false },
+    { name: 'web+type', web: true, withType: true },
+    { name: 'web', web: true, withType: false },
+  ];
+  let goodVariant = -1;
+  const callMenu = async (path, extraBody) => {
+    const order = goodVariant >= 0 ? [goodVariant] : VARIANTS.map((_, i) => i);
+    const errors = [];
+    for (const i of order) {
+      const v = VARIANTS[i];
+      const body = Object.assign({}, extraBody);
+      if (v.withType && !body.ctoken) body.notificationsMenuRequestType = 'NOTIFICATIONS_MENU_REQUEST_TYPE_INBOX';
+      try {
+        const json = await innertube(path, body, { web: v.web });
+        goodVariant = i;
+        return json;
+      } catch (err) { errors.push(v.name + ': ' + (err && err.message ? err.message : err)); }
+    }
+    throw new Error(errors.join(' | '));
   };
 
   // Duyệt JSON không phụ thuộc đường dẫn cố định (YouTube hay đổi cấu trúc)
@@ -178,8 +214,7 @@
     loading = true;
     if (!more) { listEl.textContent = ''; msg('Đang tải thông báo…'); }
     try {
-      const json = await innertube('notification/get_notification_menu',
-        more ? { ctoken: token } : { notificationsMenuRequestType: 'NOTIFICATIONS_MENU_REQUEST_TYPE_INBOX' });
+      const json = await callMenu('notification/get_notification_menu', more ? { ctoken: token } : {});
       const { items, token: next } = parseMenu(json);
       listEl.querySelectorAll('.ae-noti-msg').forEach((n) => n.remove());
       items.forEach((n) => listEl.appendChild(renderItem(n)));
@@ -229,7 +264,7 @@
     if (Date.now() - lastUnseenAt < 60000 || !hasLogin()) return;
     lastUnseenAt = Date.now();
     try {
-      const json = await innertube('notification/get_unseen_count', {});
+      const json = await callMenu('notification/get_unseen_count', {});
       let count = 0;
       walk(json, (o) => { if (typeof o.unseenCount === 'number') count = o.unseenCount; });
       setBadge(count);
