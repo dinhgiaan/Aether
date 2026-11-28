@@ -1,6 +1,6 @@
 # YouTube: Block Ads by Kato
 
-> Tên hiển thị dưới icon: **YouTube Kato**. Codename cũ *Aether* chỉ còn ở bundle ID (`com.dinhgiaan.aether`, giữ nguyên để không mất dữ liệu đã tải).
+> Tên hiển thị dưới icon: **YouTube** (phiên bản 2.0.0). Codename cũ *Aether* chỉ còn ở bundle ID (`com.dinhgiaan.aether`, giữ nguyên để không mất dữ liệu đã tải).
 
 Client YouTube cá nhân cao cấp (SwiftUI + WKWebView): Chặn quảng cáo đa tầng, phát nền Lock Screen / Control Center, tải video xem ngoại tuyến, PiP, Liquid-Glass UI.
 

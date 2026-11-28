@@ -1,4 +1,4 @@
-# Tên sản phẩm: "YouTube: Block Ads by Kato" (hiển thị dưới icon: "YouTube Kato").
+# Tên sản phẩm: "YouTube: Block Ads by Kato" (hiển thị dưới icon: "YouTube").
 # Codename cũ "Aether" chỉ còn ở bundle ID (giữ nguyên để LiveContainer không coi là app mới và mất dữ liệu đã tải).
 name: YouTubeKato
 options:
@@ -8,7 +8,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "1.0.0"
+    MARKETING_VERSION: "2.0.0"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
@@ -27,8 +27,8 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: YouTube Kato     # giữ ≤ 12 ký tự để iOS không cắt tên dưới icon
-        CFBundleShortVersionString: "1.0.0"
+        CFBundleDisplayName: YouTube          # giữ ≤ 12 ký tự để iOS không cắt tên dưới icon
+        CFBundleShortVersionString: "2.0.0"
         UIBackgroundModes: [audio]            # phát nhạc/video khi khóa màn hình
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark            # app thiết kế nền tối: launch screen hết trắng, WKWebView báo prefers-color-scheme: dark

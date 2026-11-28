@@ -377,6 +377,38 @@
     goBack();
   }, true);
 
+  // ── Nút Back gốc của YouTube trên trang kết quả /results ──────────────────
+  // Root cause "bấm Back không được": ở /results logo bị ẩn nên Aether để nút ← gốc của YouTube làm việc, nhưng nút đó
+  // gọi history.back() về mục "#searching" (lớp phủ tìm kiếm) hoặc không làm gì khi router của YouTube đã bị Aether
+  // bọc pushState → người dùng thấy như bấm không ăn. Giờ ta tự xử lý: quay về đúng trang trước khi tìm kiếm.
+  const isHeaderBackTap = (target) => {
+    const btn = target.closest?.('button, a, [role="button"]');
+    if (!btn || !btn.closest('header, ytm-mobile-topbar-renderer, .mobile-topbar-header')) return false;
+    if ((btn.textContent || '').trim()) return false;                     // nút có chữ → không phải nút back
+    if (btn.querySelector(STRICT_SEARCH_INPUT_SEL) || btn.matches(STRICT_SEARCH_INPUT_SEL)) return false;
+    const r = btn.getBoundingClientRect();
+    return r.left < 72 && r.bottom < 80 && r.width < 80;                  // nút nhỏ nằm sát góc trên-trái
+  };
+
+  const backFromResults = () => {
+    const from = location.href;
+    goBack();
+    // Chờ history.back() xong: nếu vẫn kẹt ở trang kết quả thì về Trang chủ; nếu rơi vào lớp phủ "#searching" thì lùi thêm 1 bước
+    setTimeout(() => {
+      if (location.href === from) { location.assign('/'); return; }
+      if (/search/i.test(location.hash) && !location.pathname.startsWith('/results')) {
+        try { document.activeElement && document.activeElement.blur(); } catch (_) { }
+        history.back();
+      }
+    }, 450);
+  };
+
+  window.addEventListener('click', (e) => {
+    if (!location.pathname.startsWith('/results') || !isHeaderBackTap(e.target)) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    backFromResults();
+  }, true);
+
   // pushState không bắn popstate/hashchange → bổ sung theo focus ô nhập (setTimeout 0: activeElement cập nhật sau focusout)
   document.addEventListener('focusin', () => setTimeout(syncBackButton, 0));
   document.addEventListener('focusout', () => setTimeout(syncBackButton, 0));

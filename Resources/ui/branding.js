@@ -16,6 +16,18 @@
        Khi kéo, ytfix.js đặt html.ae-drag { background: transparent !important } nên vẫn thắng quy tắc này. */
     html { background-color: #0f0f0f; }
 
+    /* Chặn chọn chữ / menu "Copy · Look Up · Translate" của iOS khi chạm giữ hoặc chạm nhầm.
+       Root cause lỗi trong ảnh: WKWebView cho chọn chữ trên toàn trang, nên 1 lần chạm giữ là kéo ra vùng chọn
+       trải từ ô tìm kiếm tới thumbnail. Chỉ cho chọn trong ô nhập liệu để vẫn gõ/dán/sửa được. */
+    html, body {
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    input, textarea, [contenteditable="true"], [contenteditable=""] {
+      -webkit-user-select: text; user-select: text;
+      -webkit-touch-callout: default;
+    }
+
     /* Ẩn kệ Shorts */
     ytm-reel-shelf-renderer { display: none !important; }
 
