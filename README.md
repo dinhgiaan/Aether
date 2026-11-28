@@ -40,6 +40,7 @@ Cài file `YouTube-BlockAds.ipa` qua **LiveContainer** / TrollStore / AltStore /
 | `Resources/ui/branding.js` | Logo YouTube ở header, dọn Shorts và mục thừa ở Hồ sơ |
 | `Resources/ui/nav.js` | Ẩn thanh tab của YouTube, báo trạng thái tìm kiếm / cuộn cho Swift |
 | `Resources/ui/search.js` | Giao diện lịch sử/gợi ý tìm kiếm, nút Back thay logo |
+| `Resources/ui/bell.js` | Nút chuông thông báo cạnh nút tìm kiếm, mở trang thông báo của YouTube |
 | `Resources/ui/watch.js` | Trang xem video: vuốt xuống PiP, player ghim, fullscreen giả, vuốt mép trái để quay lại |
 | `Resources/ui/watch-fx.js` | Animation trả lời bình luận, panel hàng đợi Mix |
 | `Resources/ui/debug.js` | Gỡ lỗi: giữ 3 ngón tay để copy sơ đồ DOM |

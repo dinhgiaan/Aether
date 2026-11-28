@@ -1,5 +1,5 @@
 // Aether UI – core: namespace chung `window.AE`, nạp CSS, đăng ký hook vòng đời cho các module.
-// Thứ tự nạp (xem WebController.uiScripts): core → branding → nav → search → watch → watch-fx → debug → boot
+// Thứ tự nạp (xem WebController.uiScripts): core → branding → nav → search → bell → watch → watch-fx → debug → boot
 (() => {
   'use strict';
   if (window.AE) return;

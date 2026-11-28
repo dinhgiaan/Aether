@@ -409,11 +409,41 @@
     backFromResults();
   }, true);
 
+  // Dự phòng khi YouTube nuốt luôn sự kiện click của nút ←: bắt thẳng ở touchend theo VỊ TRÍ (góc trên-trái, trong header),
+  // không phụ thuộc DOM/class của YouTube. Dùng chung 1 hàm với nút native của Swift (AE.search.back).
+  (() => {
+    const ZONE_X = 44, ZONE_Y = 56;           // vùng nút ← (pt): sát góc trên-trái, trước ô tìm kiếm
+    let s = null, swallowClickUntil = 0;
+    const inZone = (t) => t.clientX < ZONE_X && t.clientY < ZONE_Y;
+    window.addEventListener('touchstart', (e) => {
+      s = null;
+      if (!location.pathname.startsWith('/results') || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (inZone(t)) s = { x: t.clientX, y: t.clientY };
+    }, { passive: true, capture: true });
+    window.addEventListener('touchend', (e) => {
+      const st = s; s = null;
+      if (!st || !e.changedTouches.length) return;
+      const t = e.changedTouches[0];
+      if (Math.hypot(t.clientX - st.x, t.clientY - st.y) > 10 || !inZone(t)) return;   // kéo/cuộn, không phải chạm
+      e.preventDefault(); e.stopImmediatePropagation();
+      swallowClickUntil = Date.now() + 600;     // chặn click tổng hợp kế tiếp để không back 2 lần
+      backFromResults();
+    }, { passive: false, capture: true });
+    window.addEventListener('click', (e) => {
+      if (Date.now() < swallowClickUntil && e.clientX < ZONE_X && e.clientY < ZONE_Y) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      }
+    }, true);
+  })();
+
   // pushState không bắn popstate/hashchange → bổ sung theo focus ô nhập (setTimeout 0: activeElement cập nhật sau focusout)
   document.addEventListener('focusin', () => setTimeout(syncBackButton, 0));
   document.addEventListener('focusout', () => setTimeout(syncBackButton, 0));
 
-  AE.search = { isSearchUI, enhanceSearch, goBack };
+  // Swift gọi hàm này từ nút Back native: /results → backFromResults, còn lại (lớp phủ tìm kiếm) → goBack
+  const back = () => { if (location.pathname.startsWith('/results')) backFromResults(); else goBack(); };
+  AE.search = { isSearchUI, enhanceSearch, goBack, back };
 
   AE.on('refresh', () => { syncBackButton(); enhanceSearch(); });
   AE.on('browse', () => { syncBackButton(); enhanceSearch(); });

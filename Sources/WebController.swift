@@ -452,6 +452,17 @@ final class WebController: NSObject, ObservableObject {
         run("window.__aeMedia && window.__aeMedia.minimize && window.__aeMedia.minimize();")
     }
 
+    /// Nút Back native ở góc trên-trái khi đang tìm kiếm: gọi logic quay lại trong JS (AE.search.back),
+    /// còn nếu JS không phản hồi thì tự lùi bằng WKWebView để không bao giờ kẹt.
+    func goBackFromSearch() {
+        let wv = webView
+        wv.evaluateJavaScript("window.AE && AE.search ? (AE.search.back(), true) : false", in: nil, in: .page) { [weak wv] result in
+            guard let wv else { return }
+            if case .success(let ok as Bool) = result, ok { return }
+            if wv.canGoBack { wv.goBack() } else if let home = URL(string: "https://m.youtube.com/") { wv.load(URLRequest(url: home)) }
+        }
+    }
+
     func goBackToHome() {
         handleSwipeDown()
     }
@@ -656,7 +667,7 @@ final class WebController: NSObject, ObservableObject {
 
     /// Các module giao diện JS, nạp theo đúng thứ tự này (module sau dùng namespace `window.AE` của core)
     private static let uiScripts = [
-        "core", "branding", "nav", "search", "watch", "watch-fx", "debug", "boot"
+        "core", "branding", "nav", "search", "bell", "watch", "watch-fx", "debug", "boot"
     ]
 
     private static func loadResource(_ name: String, _ ext: String) -> String? {

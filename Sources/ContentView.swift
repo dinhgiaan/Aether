@@ -46,6 +46,21 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: web.isFullscreen ? .all : .bottom)   // xoay ngang: phủ kín cả tai thỏ, không còn viền đen 2 bên
 
+            // Nút Back native phủ lên mũi tên ← của header khi tìm kiếm (/results hoặc lớp phủ tìm kiếm).
+            // Root cause "bấm Back không được": chạm trong WebView bị YouTube/WKWebView nuốt → dùng lớp native bắt chạm trước.
+            if web.isSearching && !web.isWatching && !web.isFullscreen && !web.showOfflineLibrary {
+                Color.clear
+                    .frame(width: 52, height: 56)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        Haptic.feedback(.light)
+                        web.goBackFromSearch()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .zIndex(12)
+                    .accessibilityLabel("Quay lại")
+            }
+
             // Nút Tải video nổi: nhỏ gọn, kéo thả tự do, nhớ vị trí
             // Bọc Group để animation CHỈ áp cho nút (trước đây .animation gắn cả ZStack → WebView bị animate khi xoay → giật)
             Group {
