@@ -47,12 +47,14 @@ final class WebController: NSObject, ObservableObject {
     @Published var selectedTab: AppTab = .home
     /// Đang ở giao diện tìm kiếm (gợi ý / kết quả) → ẩn thanh tab
     @Published var isSearching = false
+    /// YouTube đang mở bottom sheet / dialog (menu ⋮…) → ẩn thanh tab native để không che các mục cuối của sheet
+    @Published var isSheetOpen = false
     /// Cuộn xuống → ẩn thanh tab, cuộn lên → hiện (JS tính ngưỡng, xem Resources/ui/nav.js)
     @Published var isBarHiddenByScroll = false
 
     /// Thanh tab hiện khi: đang ở màn hình Đã tải, hoặc ở trang duyệt (không xem video, không tìm kiếm, không toàn màn hình, chưa cuộn ẩn)
     var isTabBarVisible: Bool {
-        showOfflineLibrary || (!isWatching && !isSearching && !isFullscreen && !isBarHiddenByScroll)
+        showOfflineLibrary || (!isWatching && !isSearching && !isSheetOpen && !isFullscreen && !isBarHiddenByScroll)
     }
 
     // MARK: - Tab: mỗi tab YouTube giữ 1 WKWebView riêng
@@ -105,6 +107,7 @@ final class WebController: NSObject, ObservableObject {
         updateWatching()
         isFullscreen = false
         isSearching = false
+        isSheetOpen = false
         // Báo JS của trang tab đó gửi lại trạng thái (tìm kiếm / thanh cuộn) để Swift đồng bộ với đúng trang đang hiển thị
         target.evaluateJavaScript("window.__aeReport && window.__aeReport();", in: nil, in: .page, completionHandler: nil)
         // Tab chưa vẽ xong: hiện skeleton đúng bố cục trang (thay cho vòng xoay), đổi lớp tức thì.
@@ -882,6 +885,9 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     if fromVisible, message.webView === target.browseWebView {
                         if let searching = dict["searching"] as? Bool, target.isSearching != searching {
                             target.isSearching = searching
+                        }
+                        if let sheet = dict["sheetOpen"] as? Bool, target.isSheetOpen != sheet {
+                            target.isSheetOpen = sheet
                         }
                         if let hidden = dict["barHidden"] as? Bool, target.isBarHiddenByScroll != hidden {
                             target.isBarHiddenByScroll = hidden

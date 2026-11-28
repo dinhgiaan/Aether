@@ -17,11 +17,41 @@
     }
   `);
 
-  // ── 1. Báo "đang tìm kiếm" cho Swift (chỉ khi đổi) ───────────────────────
-  let lastSearching;
+  // ── 0. Phát hiện bottom sheet / dialog đang mở (menu ⋮ của video, chia sẻ, lưu vào playlist…) ──
+  // Root cause lỗi "thanh tab đè lên menu": thanh tab là lớp native nằm TRÊN WebView nên che luôn các mục cuối của sheet.
+  // Giờ báo cho Swift { sheetOpen } để ẩn thanh tab khi sheet mở. Không dựa vào 1 tên thẻ duy nhất (YouTube hay đổi):
+  // vừa kiểm tra các thẻ sheet/scrim đã biết, vừa quét lớp con trực tiếp của body/ytm-app tìm khối position:fixed dính đáy màn hình.
+  const KNOWN_SHEET = 'ytw-scrim, bottom-sheet-container, ytm-bottom-sheet-renderer, ytm-menu-popup-renderer, ytm-dialog, tp-yt-paper-dialog, .bottom-sheet-layout, #ae-sheet';
+  const isShown = (el) => {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const isSheetOpen = () => {
+    if (!document.body || AE.isWatching()) return false;       // trang video đã ẩn thanh tab sẵn
+    for (const el of document.querySelectorAll(KNOWN_SHEET)) {
+      if (el.getBoundingClientRect().height > 80 && isShown(el)) return true;
+    }
+    const app = document.querySelector('ytm-app');
+    const roots = [...document.body.children, ...(app ? app.children : [])];
+    for (const el of roots) {
+      if (el.id === 'ae-bell' || el.id === 'ae-noti') continue;
+      const cs = getComputedStyle(el);
+      if (cs.position !== 'fixed' || cs.pointerEvents === 'none') continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 120 && r.width >= window.innerWidth * 0.85 && r.bottom >= window.innerHeight - 2 && isShown(el)) return true;
+    }
+    return false;
+  };
+
+  // ── 1. Báo "đang tìm kiếm" + "đang mở sheet" cho Swift (chỉ khi đổi) ─────────
+  let lastSearching, lastSheet;
   const report = () => {
     const searching = AE.search ? !!AE.search.isSearchUI() : false;
     if (searching !== lastSearching) { lastSearching = searching; AE.post({ searching }); }
+    const sheetOpen = isSheetOpen();
+    if (sheetOpen !== lastSheet) { lastSheet = sheetOpen; AE.post({ sheetOpen }); }
   };
 
   // ── 2. Tự ẩn thanh tab khi cuộn, có ngưỡng (hysteresis) để không nhấp nháy ──
@@ -59,7 +89,7 @@
   // và gửi lại trạng thái tìm kiếm để Swift đồng bộ với đúng trang đang hiển thị.
   window.__aeReport = () => {
     hidden = false; acc = 0; lastY = window.scrollY;
-    lastSearching = undefined;
+    lastSearching = undefined; lastSheet = undefined;
     report();
   };
 
@@ -76,6 +106,8 @@
     // Mở/đóng giao diện tìm kiếm có thể không đổi URL (pushState/hash) → bổ sung theo focus ô nhập
     document.addEventListener('focusin', () => setTimeout(report, 0));
     document.addEventListener('focusout', () => setTimeout(report, 0));
+    // Sheet mở/đóng sau 1 cú chạm (menu ⋮, nền mờ để đóng): kiểm tra nhanh thay vì chờ nhịp 300ms của observer chung
+    document.addEventListener('click', () => { setTimeout(report, 120); setTimeout(report, 450); }, true);
     report();
   });
 
