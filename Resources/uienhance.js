@@ -551,7 +551,7 @@
     const COMMIT_DIST = 90;
 
     // Root cause khung đen phía sau khi kéo: player (position:fixed) bị kéo đi nhưng chỗ cũ của nó vẫn là nền/placeholder
-    // đen của trang video. Giờ lúc kéo: ẩn mọi thứ trừ player (CSS .ae-drag trong aetherfix.js) + báo Swift cho WebView
+    // đen của trang video. Giờ lúc kéo: ẩn mọi thứ trừ player (CSS .ae-drag trong ytfix.js) + báo Swift cho WebView
     // video trong suốt → lộ trang chủ (WebView duyệt) nằm phía sau, giống vuốt thu nhỏ kiểu app thật.
     const postDrag = (on) => { try { window.webkit.messageHandlers.aetherNav.postMessage({ action: 'dragReveal', on }); } catch (_) { } };
     const revealOn = (el) => {

@@ -525,7 +525,7 @@
 
     try {
       window.webkit?.messageHandlers?.nowPlaying?.postMessage({
-        title: title || 'Aether Player',
+        title: title || 'YouTube',
         author: author,
         duration: isFinite(v.duration) ? v.duration : 0,
         currentTime: isFinite(v.currentTime) ? v.currentTime : 0,

@@ -29,7 +29,7 @@ jobs:
 
       - name: Build (không ký)
         run: |
-          xcodebuild -project Aether.xcodeproj -scheme Aether \
+          xcodebuild -project YouTubeKato.xcodeproj -scheme YouTubeKato \
             -configuration Release -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
@@ -38,13 +38,13 @@ jobs:
       - name: Đóng gói .ipa
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/Aether.app Payload/
-          zip -qry Aether.ipa Payload
+          cp -R build/Build/Products/Release-iphoneos/YouTubeKato.app Payload/
+          zip -qry YouTube-BlockAds.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Aether-ipa
-          path: Aether.ipa
+          name: YouTube-BlockAds-ipa
+          path: YouTube-BlockAds.ipa
 
       # Release "latest" luôn trỏ tới bản mới nhất, tải thẳng từ Safari trên iPhone
       - name: Đăng release latest
@@ -52,4 +52,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest Aether.ipa --title "Aether (latest)" --notes "Build tự động từ commit ${GITHUB_SHA::7}"
+          gh release create latest YouTube-BlockAds.ipa --title "YouTube Block Ads (latest)" --notes "Build tự động từ commit ${GITHUB_SHA::7}"

@@ -2,7 +2,7 @@ import SwiftUI
 import AVFoundation
 
 @main
-struct AetherApp: App {
+struct YouTubeKatoApp: App {
     init() {
         // Category .playback: vẫn phát khi khóa màn hình / bật chế độ im lặng
         // .mixWithOthers: giảm thiểu ngắt quãng âm thanh khi có notification nhỏ từ app khác

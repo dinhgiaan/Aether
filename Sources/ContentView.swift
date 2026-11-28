@@ -112,10 +112,10 @@ struct ContentView: View {
             .zIndex(25)
             .animation(.spring(response: 0.38, dampingFraction: 0.85), value: web.isTabBarVisible)
 
-            // Cinematic Netflix-Style Splash Screen: hiển thị khi mở app, tự động biến mất mượt mà
+            // Splash giống app YouTube gốc: hiển thị khi mở app, tự động biến mất mượt mà
             if showSplash {
-                // isPageReady: splash chỉ thoát khi intro chạy xong VÀ trang YouTube đã vẽ feed
-                NetflixSplashView(isPageReady: !web.isInitialLoading) {
+                // isPageReady: splash chỉ thoát khi đã hiện đủ thời gian tối thiểu VÀ trang YouTube đã vẽ feed
+                SplashView(isPageReady: !web.isInitialLoading) {
                     withAnimation(.easeInOut(duration: 0.35)) {
                         showSplash = false
                         web.dismissSplash()

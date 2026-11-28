@@ -153,7 +153,7 @@ final class WebController: NSObject, ObservableObject {
 
         // Script vá hiển thị (nền tối, class ae-watching sớm, báo feed/watch sẵn sàng).
         // Phải đăng ký TRƯỚC adblock/ui để chạy đầu tiên.
-        if let js = WebController.loadResource("aetherfix", "js") {
+        if let js = WebController.loadResource("ytfix", "js") {
             contentController.addUserScript(
                 WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             )
@@ -722,7 +722,7 @@ final class WebController: NSObject, ObservableObject {
     private var cachedArtwork: MPMediaItemArtwork?
 
     func updateNowPlaying(dict: [String: Any]) {
-        let title = dict["title"] as? String ?? "Aether Video"
+        let title = dict["title"] as? String ?? "YouTube"
         let author = dict["author"] as? String ?? "YouTube"
         let duration = dict["duration"] as? Double ?? 0
         let currentTime = dict["currentTime"] as? Double ?? 0

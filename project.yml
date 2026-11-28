@@ -1,4 +1,6 @@
-name: Aether
+# Tên sản phẩm: "YouTube: Block Ads by Kato" (hiển thị dưới icon: "YouTube Kato").
+# Codename cũ "Aether" chỉ còn ở bundle ID (giữ nguyên để LiveContainer không coi là app mới và mất dữ liệu đã tải).
+name: YouTubeKato
 options:
   bundleIdPrefix: com.dinhgiaan
   deploymentTarget:
@@ -16,7 +18,7 @@ settings:
     Release:
       SWIFT_OPTIMIZATION_LEVEL: "-O"
 targets:
-  Aether:
+  YouTubeKato:
     type: application
     platform: iOS
     sources:
@@ -25,7 +27,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: Aether
+        CFBundleDisplayName: YouTube Kato     # giữ ≤ 12 ký tự để iOS không cắt tên dưới icon
         CFBundleShortVersionString: "1.0.0"
         UIBackgroundModes: [audio]            # phát nhạc/video khi khóa màn hình
         UILaunchScreen: {}

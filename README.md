@@ -1,4 +1,6 @@
-# Aether
+# YouTube: Block Ads by Kato
+
+> Tên hiển thị dưới icon: **YouTube Kato**. Codename cũ *Aether* chỉ còn ở bundle ID (`com.dinhgiaan.aether`, giữ nguyên để không mất dữ liệu đã tải).
 
 Client YouTube cá nhân cao cấp (SwiftUI + WKWebView): Chặn quảng cáo đa tầng, phát nền Lock Screen / Control Center, tải video xem ngoại tuyến, PiP, Liquid-Glass UI.
 
@@ -10,24 +12,24 @@ Client YouTube cá nhân cao cấp (SwiftUI + WKWebView): Chặn quảng cáo đ
 - ⬇️ **Cử chỉ vuốt xuống về Trang chủ**: Vuốt nhẹ video xuống hoặc bấm nút mũi tên kính góc trên để thu nhỏ/quay lại trang chủ như app gốc.
 - 💊 **Thanh điều hướng Liquid-Glass 120Hz**: Capsule nổi bo tròn, tự ẩn khi cuộn xuống, hiện khi cuộn lên, thanh tab native dạng capsule nổi kiểu iOS 26 (chỉ icon, pill nền active trượt mượt theo tab đang chọn, tự ẩn khi cuộn, mỗi tab giữ trang riêng nên chuyển tab tức thì và nhớ vị trí cuộn, dùng chung cho trang YouTube và màn hình Đã tải, bấm lại tab để cuộn lên đầu, tối ưu 60/120fps không giật lag.
 - ❌ **Sạch bóng Shorts & Rác**: Xóa hoàn toàn tab Shorts, kệ Shorts trang chủ, video gợi ý Shorts; xóa các nút Films, Help, Feedback, YouTube Premium ở mục Hồ sơ; xóa nút la bàn bên cạnh thanh lọc chủ đề.
-- ✨ **Header & Tìm kiếm Aether**: Thay logo YouTube thành logo Aether phát sáng; khi tìm kiếm logo đổi thành nút mũi tên quay về trang trước; làm mới giao diện lịch sử tìm kiếm và thu gọn bình luận 15% tinh tế.
+- ✨ **Header & Tìm kiếm**: Logo YouTube chuẩn như app gốc (không thêm chữ); khi tìm kiếm logo đổi thành nút mũi tên quay về trang trước; làm mới giao diện lịch sử tìm kiếm và thu gọn bình luận 15% tinh tế.
 - 📥 **Banner tiến trình tải**: Vuốt lên/sang ngang để ẩn, nút ✕ để hủy tải.
 - ⚡ **Khởi động siêu tốc**: Splash screen pop-up mượt mà và tự động vào app ngay trong ~0.8s.
 
 ## Build
-Push lên `main` → GitHub Actions tự động build → tải `Aether.ipa` ở mục **Releases** (tag `latest`).
+Push lên `main` → GitHub Actions tự động build → tải `YouTube-BlockAds.ipa` ở mục **Releases** (tag `latest`).
 
 ## Cài đặt
-Cài file `Aether.ipa` qua **LiveContainer** / TrollStore / AltStore / Sideloadly (hỗ trợ JIT-less mode).
+Cài file `YouTube-BlockAds.ipa` qua **LiveContainer** / TrollStore / AltStore / Sideloadly (hỗ trợ JIT-less mode).
 
 ## Cấu trúc dự án
 | File | Chức năng |
 |------|-----------|
-| `Sources/AetherApp.swift` | Điểm khởi chạy app, cấu hình AVAudioSession |
+| `Sources/YouTubeKatoApp.swift` | Điểm khởi chạy app, cấu hình AVAudioSession |
 | `Sources/OfflineManager.swift` | Quản lý tải xuống (có hủy tải), lưu file MP4 và ảnh bìa video ngoại tuyến |
 | `Sources/OfflineLibraryView.swift` | Giao diện danh sách video ngoại tuyến & Native AVPlayer |
 | `Sources/ContentView.swift` | Giao diện chính SwiftUI, ghép các view con |
-| `Sources/Views/NetflixSplashView.swift` | Splash intro khi mở app |
+| `Sources/Views/SplashView.swift` | Splash giống app YouTube gốc: nền tối + logo giữa màn hình, mờ dần khi feed đã vẽ |
 | `Sources/Views/DownloadQualitySheet.swift` | Sheet chọn chất lượng tải xuống |
 | `Sources/Views/NativeTabBar.swift` | Thanh tab native: Home · Đăng ký · Đã tải · Bạn, pill nền trượt bằng `matchedGeometryEffect` |
 | `Sources/Views/DownloadProgressBanner.swift` | Banner tiến trình tải (vuốt để ẩn, nút hủy) |
@@ -35,7 +37,7 @@ Cài file `Aether.ipa` qua **LiveContainer** / TrollStore / AltStore / Sideloadl
 | `Sources/WebController.swift` | Quản lý WKWebView, MPNowPlayingInfoCenter, MPRemoteCommandCenter |
 | `Resources/adblock.js` | Lọc quảng cáo, đồng bộ media session, kiểm soát phát nền |
 | `Resources/ui/core.js` | Namespace `window.AE`, nạp CSS, hook vòng đời cho các module |
-| `Resources/ui/branding.js` | Logo Aether, header, dọn Shorts và mục thừa ở Hồ sơ |
+| `Resources/ui/branding.js` | Logo YouTube ở header, dọn Shorts và mục thừa ở Hồ sơ |
 | `Resources/ui/nav.js` | Ẩn thanh tab của YouTube, báo trạng thái tìm kiếm / cuộn cho Swift |
 | `Resources/ui/search.js` | Giao diện lịch sử/gợi ý tìm kiếm, nút Back thay logo |
 | `Resources/ui/watch.js` | Trang xem video: vuốt xuống PiP, player ghim, fullscreen giả, vuốt mép trái để quay lại |
@@ -43,5 +45,6 @@ Cài file `Aether.ipa` qua **LiveContainer** / TrollStore / AltStore / Sideloadl
 | `Resources/ui/debug.js` | Gỡ lỗi: giữ 3 ngón tay để copy sơ đồ DOM |
 | `Resources/ui/boot.js` | Nối sự kiện điều hướng + MutationObserver (nạp cuối cùng) |
 | `Resources/blocklist.json` | Danh sách rule chặn request cấp mạng của WebKit |
-| `Resources/Assets.xcassets` | Bộ nhận diện thương hiệu & Logo app Aether |
+| `Resources/Assets.xcassets` | App icon (`AppIcon`) và logo splash (`YouTubeLogo`) |
+| `Design/` | File SVG gốc của logo (header: `logo-in-app.svg`, splash/icon: `logo-app.svg`) |
 | `project.yml` | Cấu hình XcodeGen, quyền hệ thống và cờ tối ưu |
