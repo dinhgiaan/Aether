@@ -39,6 +39,38 @@ final class WebController: NSObject, ObservableObject {
     @Published var activeDownloadInfo: VideoDownloadInfo?
     @Published var showDownloadSheet = false
     @Published var showOfflineLibrary = false
+    /// Tab đang chọn của thanh tab native (đồng bộ từ URL trang duyệt, hoặc đặt ngay khi người dùng bấm để pill chạy tức thì)
+    @Published var selectedTab: AppTab = .home
+    /// Đang ở giao diện tìm kiếm (gợi ý / kết quả) → ẩn thanh tab
+    @Published var isSearching = false
+    /// Cuộn xuống → ẩn thanh tab, cuộn lên → hiện (JS tính ngưỡng, xem Resources/ui/nav.js)
+    @Published var isBarHiddenByScroll = false
+
+    /// Thanh tab hiện khi: đang ở màn hình Đã tải, hoặc ở trang duyệt (không xem video, không tìm kiếm, không toàn màn hình, chưa cuộn ẩn)
+    var isTabBarVisible: Bool {
+        showOfflineLibrary || (!isWatching && !isSearching && !isFullscreen && !isBarHiddenByScroll)
+    }
+
+    /// Mở 1 tab của YouTube (Home / Đăng ký / Bạn). Ưu tiên bấm hộ tab gốc trong DOM (điều hướng SPA, không tải lại trang);
+    /// không bấm được thì nạp URL dự phòng.
+    func openTab(_ tab: AppTab) {
+        guard tab != .downloads else { return }
+        selectedTab = tab                  // pill chạy ngay, không đợi trang
+        isBarHiddenByScroll = false
+        // Đang ở trang video (mở thư viện từ nút tải nổi): đóng video trước để quay về WebView duyệt
+        if webView !== browseWebView { closeWatch() }
+        let target = webView
+        let js = "window.__aeGoTab ? window.__aeGoTab('\(tab.key)') : false"
+        Task { @MainActor in
+            let ok = (try? await target.evaluateJavaScript(js, in: nil, contentWorld: .page)) as? Bool ?? false
+            if !ok, let url = tab.fallbackURL { target.load(URLRequest(url: url)) }
+        }
+    }
+
+    /// Bấm lại tab đang chọn: cuộn mượt lên đầu trang (không tải lại)
+    func scrollToTop() {
+        run("window.__aeScrollTop && window.__aeScrollTop();")
+    }
     /// Video đang toàn màn hình (native hoặc xoay ngang) → ẩn nút Tải nổi
     @Published var isFullscreen = false {
         didSet {
@@ -57,7 +89,7 @@ final class WebController: NSObject, ObservableObject {
     private(set) var parkedWebView: WKWebView?
     /// WebView duyệt (trang chủ, tìm kiếm…) – KHÔNG bao giờ bị thay khi mở video, nên feed + vị trí cuộn được giữ nguyên.
     /// Video mở ở một WebView riêng (nằm trên); vuốt xuống chỉ việc hiện lại WebView này.
-    private var browseWebView: WKWebView!
+    private(set) var browseWebView: WKWebView!
     private var lastBrowseURL: URL = Config.home
     private let configuration: WKWebViewConfiguration
     /// start() được gọi từ init VÀ từ ContentView.task → cờ này đảm bảo chỉ nạp trang + biên dịch blocklist đúng 1 lần
@@ -579,7 +611,7 @@ final class WebController: NSObject, ObservableObject {
 
     /// Các module giao diện JS, nạp theo đúng thứ tự này (module sau dùng namespace `window.AE` của core)
     private static let uiScripts = [
-        "core", "branding", "nav", "downloads-tab", "search", "watch", "watch-fx", "debug", "boot"
+        "core", "branding", "nav", "search", "watch", "watch-fx", "debug", "boot"
     ]
 
     private static func loadResource(_ name: String, _ ext: String) -> String? {
@@ -759,6 +791,18 @@ final class WeakScriptProxy: NSObject, WKScriptMessageHandler {
                     }
                     if let fs = dict["isFullscreen"] as? Bool, fromVisible || fromParked, target.isFullscreen != fs {
                         target.isFullscreen = fs
+                    }
+                    // Trạng thái thanh tab: chỉ nhận từ trang duyệt đang hiển thị (không nhận từ trang video / trang PiP ở nền)
+                    if fromVisible, message.webView === target.browseWebView {
+                        if let key = dict["tab"] as? String, let tab = AppTab.fromKey(key), target.selectedTab != tab {
+                            target.selectedTab = tab
+                        }
+                        if let searching = dict["searching"] as? Bool, target.isSearching != searching {
+                            target.isSearching = searching
+                        }
+                        if let hidden = dict["barHidden"] as? Bool, target.isBarHiddenByScroll != hidden {
+                            target.isBarHiddenByScroll = hidden
+                        }
                     }
                     if let action = dict["action"] as? String {
                         if action == "minimizeToPiP" {

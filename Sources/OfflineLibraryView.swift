@@ -2,46 +2,10 @@ import SwiftUI
 import AVKit
 
 struct OfflineLibraryView: View {
-    var onBack: (() -> Void)? = nil
     // Quan sát lớp đệm đã throttle thay vì OfflineManager: tiến trình tải cập nhật rất dày, quan sát thẳng sẽ
     // dựng lại cả danh sách (kể cả đọc file/giải mã ảnh của từng hàng) hàng chục lần mỗi giây
     @ObservedObject private var downloads = DownloadUIState.shared
-    @Environment(\.dismiss) private var dismiss
     @State private var playingVideo: OfflineVideo?
-    // Vuốt từ mép trái sang phải để quay lại (giống nút back)
-    @State private var dragX: CGFloat = 0
-    @State private var isEdgeDragging = false
-    private let edgeWidth: CGFloat = 28           // vùng nhận vuốt: 28pt sát mép trái
-    private let commitDistance: CGFloat = 110     // kéo quá ngưỡng này thì quay lại
-
-    /// Quay lại: ưu tiên callback của ContentView (có animation riêng), không có thì dismiss
-    private func goBack() {
-        if let onBack = onBack { onBack() } else { dismiss() }
-    }
-
-    /// Vuốt từ mép trái: màn hình đi theo ngón tay; thả đủ xa hoặc vuốt nhanh thì quay lại, không thì bật về
-    private var edgeSwipeBack: some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .global)
-            .onChanged { value in
-                if !isEdgeDragging {
-                    // Chỉ bắt đầu khi chạm từ mép trái và hướng kéo chủ yếu là ngang (không cướp thao tác cuộn danh sách)
-                    guard value.startLocation.x < edgeWidth,
-                          value.translation.width > abs(value.translation.height) else { return }
-                    isEdgeDragging = true
-                }
-                dragX = max(0, value.translation.width)
-            }
-            .onEnded { value in
-                guard isEdgeDragging else { return }
-                isEdgeDragging = false
-                if value.translation.width > commitDistance || value.predictedEndTranslation.width > 220 {
-                    goBack()
-                } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragX = 0 }
-                }
-            }
-    }
-
     var body: some View {
         NavigationStack {
             ZStack {
@@ -64,22 +28,11 @@ struct OfflineLibraryView: View {
                     .scrollContentBackground(.hidden)
                 }
             }
+            // Chừa chỗ cho thanh tab native (ContentView vẽ đè lên màn hình này và màn hình này bị .ignoresSafeArea()):
+            // 54pt thanh + ~34pt vùng thanh home + khe → 96pt
+            .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: 96) }
             .navigationTitle("Video Ngoại Tuyến")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        goBack()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(Color.white.opacity(0.16)))
-                    }
-                    .accessibilityLabel("Quay lại")
-                }
-            }
             .fullScreenCover(item: $playingVideo) { video in
                 ZStack(alignment: .topTrailing) {
                     NativeVideoPlayer(url: video.videoURL, title: video.title) {
@@ -101,9 +54,6 @@ struct OfflineLibraryView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .offset(x: dragX)
-        // simultaneousGesture: không chặn cuộn danh sách / bấm nút; chỉ hoạt động khi bắt đầu từ mép trái
-        .simultaneousGesture(edgeSwipeBack)
     }
 }
 

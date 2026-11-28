@@ -11,6 +11,26 @@ struct ContentView: View {
     /// Các video người dùng đã vuốt ẩn banner (banner hiện lại khi có video mới)
     @State private var dismissedBannerIDs: Set<String> = []
 
+    /// Tab hiển thị trên thanh: đang mở màn hình Đã tải thì là Đã tải, ngược lại theo trang YouTube
+    private var displayedTab: AppTab { web.showOfflineLibrary ? .downloads : web.selectedTab }
+
+    private func handleTabSelect(_ tab: AppTab) {
+        if tab == .downloads {
+            guard !web.showOfflineLibrary else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { web.showOfflineLibrary = true }
+            return
+        }
+        if web.showOfflineLibrary {
+            withAnimation(.easeInOut(duration: 0.25)) { web.showOfflineLibrary = false }
+            // Trang YouTube phía sau đã đang ở đúng tab → chỉ cần đóng thư viện
+            if tab != web.selectedTab || web.isWatching { web.openTab(tab) }
+        } else if tab == web.selectedTab {
+            web.scrollToTop()          // bấm lại tab đang chọn: chỉ cuộn lên đầu, không tải lại
+        } else {
+            web.openTab(tab)
+        }
+    }
+
     /// Video đầu tiên đang tải mà chưa bị ẩn banner
     private var bannerID: String? {
         downloads.activeIDs.first { !dismissedBannerIDs.contains($0) }
@@ -75,18 +95,22 @@ struct ContentView: View {
 
             // Màn hình Thư viện Ngoại Tuyến toàn trang (Dedicated Full Page)
             if web.showOfflineLibrary {
-                OfflineLibraryView(onBack: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        web.showOfflineLibrary = false
-                    }
-                })
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing),
-                    removal: .move(edge: .trailing)
-                ))
-                .zIndex(20)
-                .ignoresSafeArea()
+                OfflineLibraryView()
+                    .transition(.opacity)
+                    .zIndex(20)
+                    .ignoresSafeArea()
             }
+
+            // Thanh tab native: dùng chung cho trang YouTube và màn hình Đã tải. Nằm trên thư viện (20), dưới splash (30)
+            VStack(spacing: 0) {
+                Spacer()
+                NativeTabBar(selected: displayedTab, onSelect: handleTabSelect)
+                    .offset(y: web.isTabBarVisible ? 0 : 140)
+                    .opacity(web.isTabBarVisible ? 1 : 0)
+                    .allowsHitTesting(web.isTabBarVisible)
+            }
+            .zIndex(25)
+            .animation(.spring(response: 0.38, dampingFraction: 0.85), value: web.isTabBarVisible)
 
             // Cinematic Netflix-Style Splash Screen: hiển thị khi mở app, tự động biến mất mượt mà
             if showSplash {
