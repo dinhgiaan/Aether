@@ -12,6 +12,8 @@ final class WebHostView: UIView, UIGestureRecognizerDelegate {
 
     /// Gọi khi người dùng vuốt từ mép trái vào đủ xa. Trả về true nếu đã xử lý (vd. đóng trang video)
     var onEdgeBack: (() -> Bool)?
+    /// true khi lớp loading bắt đầu hiện, false khi bắt đầu mờ đi → SwiftUI dùng để hiện/ẩn skeleton trang video cùng nhịp
+    var onCoverVisibilityChange: ((Bool) -> Void)?
 
     private lazy var cover: UIView = {
         let v = UIView()
@@ -126,6 +128,7 @@ final class WebHostView: UIView, UIGestureRecognizerDelegate {
             ])
         }
         bringSubviewToFront(cover)
+        onCoverVisibilityChange?(true)
         UIView.animate(withDuration: 0.15) { self.cover.alpha = 1 }
         // Bảo hiểm: nếu didFinish không bao giờ tới thì vẫn gỡ lớp phủ sau 6s
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
@@ -141,6 +144,7 @@ final class WebHostView: UIView, UIGestureRecognizerDelegate {
         let delay: TimeInterval = force ? 0 : 0.35
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.coverToken == token, self.cover.superview === self else { return }
+            self.onCoverVisibilityChange?(false)
             UIView.animate(withDuration: 0.25, delay: 0, options: [.allowUserInteraction]) {
                 self.cover.alpha = 0
             } completion: { [weak self] _ in

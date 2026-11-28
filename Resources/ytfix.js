@@ -92,8 +92,8 @@
                 stable = now - stableSince;
             }
             if (!playingAt && isPlaying()) playingAt = now;
-            if (playingAt && (stable >= 200 || now - playingAt >= 450)) { finish(); return; }   // video đã phát → gỡ cover
-            if (stable >= 600) { finish(); return; }          // video không tự phát (autoplay bị chặn): layout yên là đủ
+            if (playingAt && (stable >= 120 || now - playingAt >= 300)) { finish(); return; }   // video đã phát → gỡ cover
+            if (stable >= 450) { finish(); return; }          // video không tự phát (autoplay bị chặn): layout yên là đủ
             if (now - t0 > 4000) { finish(); return; }        // bảo hiểm: không để cover treo
             requestAnimationFrame(step);
         };

@@ -235,7 +235,17 @@
   };
 
   const HEADER_SEL = 'header.mobile-topbar-header, ytm-mobile-topbar-renderer header, ytm-mobile-topbar-renderer';
-  const SEARCH_BTN_SEL = '.topbar-button-search-button, button[aria-label*="earch" i], button[aria-label*="ìm" i]';
+  const SEARCH_BTN_SEL = 'button[aria-label*="earch" i], button[aria-label*="ìm" i], a[aria-label*="earch" i]';
+  // Root cause chuông biến mất: querySelector trả về nút ĐẦU TIÊN khớp, mà header còn chứa <yt-searchbox> (ẩn ở chế độ thường)
+  // cũng có nút "Search" → lấy nhầm nút rộng 0 → chuông tự ẩn. Giờ ưu tiên .topbar-button-search-button, rồi chỉ nhận nút đang hiển thị.
+  const pickSearchButton = (header) => {
+    const preferred = header.querySelector('.topbar-button-search-button');
+    if (preferred && preferred.getBoundingClientRect().width > 0) return preferred;
+    return [...header.querySelectorAll(SEARCH_BTN_SEL)].find((b) => {
+      const r = b.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.right > window.innerWidth * 0.5 && r.top < 80;
+    }) || null;
+  };
 
   const shouldShow = () => {
     const p = location.pathname;
@@ -246,7 +256,7 @@
   const place = () => {
     if (!document.body) return;
     const header = document.querySelector(HEADER_SEL);
-    const search = header && header.querySelector(SEARCH_BTN_SEL);
+    const search = header && pickSearchButton(header);
     const hr = header && header.getBoundingClientRect();
     const sr = search && search.getBoundingClientRect();
     if (!header || !search || !sr.width || !shouldShow()) { if (bell) bell.style.display = 'none'; return; }

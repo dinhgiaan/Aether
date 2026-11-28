@@ -219,7 +219,7 @@ struct SkeletonView: View {
 
 // MARK: - Hiệu ứng nhấp nháy (một dải sáng quét ngang qua các khối xám)
 
-private struct ShimmerModifier: ViewModifier {
+struct ShimmerModifier: ViewModifier {
     @State private var phase: CGFloat = 0
 
     func body(content: Content) -> some View {
@@ -240,5 +240,87 @@ private struct ShimmerModifier: ViewModifier {
             .onAppear {
                 withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) { phase = 1 }
             }
+    }
+}
+
+
+// MARK: - Skeleton trang xem video (player đen 16:9 + tiêu đề + kênh + nút thao tác + video đề xuất)
+
+struct WatchSkeletonView: View {
+    private let pageBackground = Color(red: 15 / 255, green: 15 / 255, blue: 15 / 255)
+    private let block = Color.white.opacity(0.09)
+
+    private func bar(_ height: CGFloat, w: CGFloat? = nil, trailing: CGFloat = 0) -> some View {
+        RoundedRectangle(cornerRadius: min(height / 2, 6))
+            .fill(block)
+            .frame(width: w, height: height)
+            .frame(maxWidth: w == nil ? CGFloat.infinity : nil, alignment: .leading)
+            .padding(.trailing, w == nil ? trailing : 0)
+    }
+
+    private var relatedCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(block).aspectRatio(16 / 9, contentMode: .fit)
+            HStack(alignment: .top, spacing: 12) {
+                Circle().fill(block).frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 8) {
+                    bar(14, trailing: 28)
+                    bar(14, trailing: 110)
+                    bar(11, trailing: 170)
+                }
+                .padding(.top, 2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+        }
+        .padding(.bottom, 22)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Player: nền đen đúng tỉ lệ 16:9 (không nhấp nháy, giống lúc YouTube chờ video)
+            ZStack {
+                Color.black
+                ProgressView().tint(.white.opacity(0.7))
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    bar(20, trailing: 24)
+                    bar(20, trailing: 120)
+                    bar(12, trailing: 150)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+
+                // Hàng kênh: avatar + tên + nút Subscribe
+                HStack(spacing: 12) {
+                    Circle().fill(block).frame(width: 36, height: 36)
+                    bar(14, w: 110)
+                    Spacer(minLength: 0)
+                    Capsule().fill(block).frame(width: 96, height: 34)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 16)
+
+                // Hàng nút thao tác (like, dislike, share, save…)
+                HStack(spacing: 10) {
+                    ForEach(0..<5, id: \.self) { _ in Capsule().fill(block).frame(width: 64, height: 34) }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 18)
+
+                relatedCard
+                relatedCard
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
+            .modifier(ShimmerModifier())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(pageBackground.ignoresSafeArea(edges: .bottom))
+        .accessibilityHidden(true)
     }
 }

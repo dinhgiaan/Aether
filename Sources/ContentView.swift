@@ -46,6 +46,14 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(edges: web.isFullscreen ? .all : .bottom)   // xoay ngang: phủ kín cả tai thỏ, không còn viền đen 2 bên
 
+            // Skeleton trang xem video: hiện ngay lúc chạm (WebView video còn đang nạp) → không còn cảm giác "đơ" khi mở video
+            if web.isWatchLoading && web.isWatching && !web.isFullscreen {
+                WatchSkeletonView()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .zIndex(6)
+            }
+
             // Skeleton của tab đang tải (đúng bố cục Home / Đăng ký / Bạn). Nằm trên WebView, dưới thanh tab + splash
             if let kind = web.skeleton, !web.isWatching {
                 SkeletonView(kind: kind)
@@ -152,6 +160,7 @@ struct ContentView: View {
         .statusBarHidden(web.isFullscreen)
         .animation(.easeInOut(duration: 0.3), value: showSplash)
         .animation(.easeOut(duration: 0.25), value: web.skeleton)
+        .animation(.easeOut(duration: 0.25), value: web.isWatchLoading)
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: bannerID)
         // Dọn danh sách đã ẩn khi video đó tải xong/bị hủy
         .onChange(of: downloads.activeIDs) { _, ids in

@@ -49,6 +49,8 @@ final class WebController: NSObject, ObservableObject {
     @Published var isSearching = false
     /// YouTube đang mở bottom sheet / dialog (menu ⋮…) → ẩn thanh tab native để không che các mục cuối của sheet
     @Published var isSheetOpen = false
+    /// Lớp loading đang phủ (mở video mới…) → hiện skeleton trang xem video thay vì vòng xoay trống
+    @Published var isWatchLoading = false
     /// Cuộn xuống → ẩn thanh tab, cuộn lên → hiện (JS tính ngưỡng, xem Resources/ui/nav.js)
     @Published var isBarHiddenByScroll = false
 
@@ -222,6 +224,10 @@ final class WebController: NSObject, ObservableObject {
         configure(webView)
         hostView.install(webView)
         hostView.onEdgeBack = { [weak self] in self?.handleEdgeBack() ?? false }
+        hostView.onCoverVisibilityChange = { [weak self] visible in
+            guard let self, self.isWatchLoading != visible else { return }
+            self.isWatchLoading = visible
+        }
         observeURL()
 
         let nc = NotificationCenter.default
@@ -304,7 +310,7 @@ final class WebController: NSObject, ObservableObject {
         isWatching = true
         hostView.present(watch, sending: browseWebView, showCover: true)
         // Dựng sẵn cái kế tiếp khi UI đã yên (không trùng frame với animation mở video)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.prewarmSpare() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.prewarmSpare() }
     }
 
     private func prewarmSpare() {
@@ -408,7 +414,7 @@ final class WebController: NSObject, ObservableObject {
         guard isInitialLoading else { return }
         isInitialLoading = false
         // Trang chủ đã lên → dựng WebView dự phòng đầu tiên (tránh tranh tài nguyên lúc đang nạp trang)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.prewarmSpare() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.prewarmSpare() }
         // Rồi dựng sẵn 2 tab còn lại, cách nhau để không tranh tài nguyên với feed trang chủ
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in self?.preloadTab(.subs) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in self?.preloadTab(.you) }

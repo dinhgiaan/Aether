@@ -114,9 +114,18 @@
   const REMOVE_RE = /^(remove|xóa|xoá|gỡ|delete)$/i;
   const SEARCH_INPUT_SEL = 'input[type="search"], input[name="search_query"], input[type="text"]';
 
+  // Danh sách gợi ý/lịch sử của ô tìm kiếm mới (yt-searchbox) đang mở
+  const suggestionsOpen = () => {
+    const c = document.querySelector('.ytSearchboxComponentSuggestionsContainer');
+    return !!c && c.getClientRects().length > 0 && c.getBoundingClientRect().height > 40;
+  };
+
   const isSearchContext = () => {
     const p = location.pathname;
-    if (p.startsWith('/watch') || p.startsWith('/results') || p.startsWith('/shorts')) return false;
+    if (p.startsWith('/watch') || p.startsWith('/shorts')) return false;
+    // Root cause giao diện "lạ" khi bấm lại ô tìm kiếm ở trang kết quả: trước đây /results bị loại hẳn nên gợi ý/lịch sử không được restyle
+    // (chữ "Remove" xanh, mũi tên ↖ to nằm cột xám riêng). Giờ ở /results chỉ restyle khi danh sách gợi ý đang mở → danh sách kết quả không bị đụng tới.
+    if (p.startsWith('/results')) return suggestionsOpen();
     return /search/i.test(location.hash) || !!document.querySelector('input[type="search"], input[name="search_query"]');
   };
 
@@ -390,7 +399,20 @@
     return r.left < 72 && r.bottom < 80 && r.width < 80;                  // nút nhỏ nằm sát góc trên-trái
   };
 
+  // Đang mở gợi ý trên trang kết quả → Back chỉ đóng gợi ý (ở lại trang kết quả), như app gốc
+  const closeSuggestions = () => {
+    if (!location.pathname.startsWith('/results')) return false;
+    const a = document.activeElement;
+    const focused = !!(a && a.matches && a.matches('input, textarea'));
+    if (!suggestionsOpen() && !focused) return false;
+    try { a && a.blur && a.blur(); } catch (_) { }
+    const close = document.querySelector('c3-overlay .overlay-close-button, .overlay-close-button');
+    if (close) { try { close.click(); } catch (_) { } }
+    return true;
+  };
+
   const backFromResults = () => {
+    if (closeSuggestions()) return;
     const from = location.href;
     goBack();
     // Chờ history.back() xong: nếu vẫn kẹt ở trang kết quả thì về Trang chủ; nếu rơi vào lớp phủ "#searching" thì lùi thêm 1 bước

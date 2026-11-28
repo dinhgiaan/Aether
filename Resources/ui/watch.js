@@ -135,7 +135,7 @@
   // Cách làm không phụ thuộc cấu trúc: lấy tiêu đề video làm "mốc" → tìm nhánh nội dung chứa nó → thêm padding-top
   // cho nhánh đó cho tới khi mốc nằm ngay dưới player. Nếu YouTube đã tự chừa chỗ thì không thêm gì (không bị hở).
   const ensurePlayerSpacer = (() => {
-    let ro = null, watched = null, padEl = null, pad = 0, fixes = 0, lastNav = '';
+    let ro = null, watched = null, padEl = null, pad = 0, fixes = 0, lastNav = '', lastFixAt = 0;
     const PROBE = 'h1.slim-video-metadata-title, .slim-video-metadata-title, .ytm-slim-video-information-title, ytm-slim-video-metadata-section-renderer, ytm-slim-video-information-renderer, ytm-slim-owner-renderer, .slim-owner-channel-name';
     const clearPad = () => { if (padEl) padEl.style.removeProperty('padding-top'); padEl = null; pad = 0; };
     const setPad = (el, px) => {
@@ -190,8 +190,12 @@
       // Không cộng dồn nên không bao giờ phình lên dù bị gọi nhiều lần / số liệu thoáng qua.
       const y = probe.getBoundingClientRect().top + window.scrollY;
       const want = Math.max(0, Math.round(h - (y - pad)));
-      if (want !== pad && fixes < 6) { fixes++; setPad(branch, want); requestAnimationFrame(apply); }
-      else if (want === pad) fixes = 0;
+      if (want === pad) { fixes = 0; return; }
+      // Root cause khoảng hở ~48px giữa player và tiêu đề: trang còn dịch layout lúc mới mở nên 6 lần hiệu chỉnh đầu bị dùng hết
+      // trước khi số đo ổn định, rồi bị khóa vĩnh viễn ở giá trị lệch. Giờ cứ yên ≥0.8s là cho phép hiệu chỉnh tiếp.
+      const now = Date.now();
+      if (now - lastFixAt > 800) fixes = 0;
+      if (fixes < 6) { fixes++; lastFixAt = now; setPad(branch, want); requestAnimationFrame(apply); }
     };
     window.addEventListener('resize', () => { setTimeout(() => { fixes = 0; apply(); }, 120); setTimeout(() => { fixes = 0; apply(); }, 600); }, { passive: true });
     apply.reset = clearPad;
